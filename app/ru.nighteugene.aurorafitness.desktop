@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+X-Nemo-Application-Type=silica-qt5
+Icon=ru.nighteugene.aurorafitness
+Exec=/usr/bin/ru.nighteugene.aurorafitness
+Name=Aurora Fitness
+Name[ru]=Аврора Фитнес
+
+[X-Application]
+Permissions=Bluetooth;
+OrganizationName=ru.nighteugene
+ApplicationName=aurorafitness
+ExecDBus=/usr/bin/ru.nighteugene.aurorafitness
