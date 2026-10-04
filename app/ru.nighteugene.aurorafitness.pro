@@ -11,6 +11,7 @@ QMAKE_CXXFLAGS += -std=c++17
 CONFIG += auroraapp
 
 SOURCES += \
+    src/mprisbridge.cpp \
     src/bluezmanager.cpp \
     src/devicesmodel.cpp \
     src/storage.cpp \
@@ -24,6 +25,7 @@ SOURCES += \
 
 HEADERS += \
     src/appsettings.h \
+    src/mprisbridge.h \
     src/bluezmanager.h \
     src/devicesmodel.h \
     src/storage.h \
