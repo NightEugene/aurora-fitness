@@ -18,15 +18,26 @@ class QSocketNotifier;
 // Фоновый демон: пересылка системных уведомлений на браслет + автосинк по таймеру.
 // Перехват org.freedesktop.Notifications.Notify — через libdbus-1 (eavesdrop),
 // т.к. Qt 5.6 eavesdrop на сессионной шине не поддерживает.
+//
+// Relay-режим (setRelayMode): живёт внутри GUI — eavesdrop из песочницы
+// недоступен (xdg-dbus-proxy), поэтому демон передаёт уведомления вызовом
+// forwardNotification, а GUI шлёт их на браслет, которым в этот момент владеет.
 class NotificationDaemon : public QObject
 {
     Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "ru.nighteugene.aurorafitness.gui")
 public:
     explicit NotificationDaemon(BluezManager *bluez, const QString &mac,
                                 QObject *parent = nullptr);
     ~NotificationDaemon();
 
+    void setRelayMode(bool on) { m_relayMode = on; }
     bool start();
+
+public slots:
+    // Вызывается демоном по D-Bus, когда браслетом владеет GUI
+    void forwardNotification(const QString &appName, const QString &title,
+                             const QString &body);
 
 private slots:
     void onDbusReadyRead();
@@ -63,6 +74,7 @@ private:
     QString m_pendingTitle;
     QString m_pendingBody;
     bool m_syncPending = false;
+    bool m_relayMode = false;
 };
 
 #endif // NOTIFICATIONDAEMON_H
