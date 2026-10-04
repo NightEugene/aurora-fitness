@@ -22,6 +22,7 @@ public:
     Q_INVOKABLE QVariantMap todaySummary();
     Q_INVOKABLE QVariantList dailySummaries(int days);
     Q_INVOKABLE QVariantList sleepSessions(int limit);
+    Q_INVOKABLE QVariantList sleepStages(qlonglong bedTime);
     Q_INVOKABLE QVariantList minuteSamples(qint64 fromTs, qint64 toTs);
     Q_INVOKABLE int minuteSampleCount();
 

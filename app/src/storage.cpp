@@ -82,6 +82,9 @@ bool Storage::open()
         QStringLiteral("CREATE TABLE IF NOT EXISTS sleep_sessions("
                        "bed_time INTEGER PRIMARY KEY, wake_time INT, sleep_min INT,"
                        "deep_min INT, light_min INT, rem_min INT, awake_min INT)"),
+        // Пофазовая временная шкала сна (для гипнограммы)
+        QStringLiteral("CREATE TABLE IF NOT EXISTS sleep_stages("
+                       "bed_time INT, ts INT, stage TEXT)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS manual_samples("
                        "ts INTEGER, type TEXT, value INT, PRIMARY KEY(ts, type))"),
     };
@@ -281,6 +284,21 @@ void Storage::saveSleep(const QVariantMap &m)
         qWarning() << "Storage: insert sleep_sessions:" << q.lastError().text();
         return;
     }
+
+    // Пофазовая шкала: перезаписываем для этой сессии
+    const QVariantList stages = m.value(QStringLiteral("stages")).toList();
+    q.prepare(QStringLiteral("DELETE FROM sleep_stages WHERE bed_time=?"));
+    q.addBindValue(bedTime);
+    q.exec();
+    for (const QVariant &v : stages) {
+        const QVariantMap s = v.toMap();
+        q.prepare(QStringLiteral("INSERT INTO sleep_stages(bed_time, ts, stage)"
+                               " VALUES(?, ?, ?)"));
+        q.addBindValue(bedTime);
+        q.addBindValue(s.value(QStringLiteral("ts")).toLongLong());
+        q.addBindValue(s.value(QStringLiteral("stage")).toString());
+        q.exec();
+    }
     emit dataChanged();
 }
 
@@ -393,6 +411,27 @@ QVariantList Storage::sleepSessions(int limit)
         row.insert(QStringLiteral("lightMin"), q.value(4).toLongLong());
         row.insert(QStringLiteral("remMin"), q.value(5).toLongLong());
         row.insert(QStringLiteral("awakeMin"), q.value(6).toLongLong());
+        out.append(row);
+    }
+    return out;
+}
+
+QVariantList Storage::sleepStages(qlonglong bedTime)
+{
+    QVariantList out;
+    if (!m_ready)
+        return out;
+
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("SELECT ts, stage FROM sleep_stages"
+                             " WHERE bed_time=? ORDER BY ts"));
+    q.addBindValue(bedTime);
+    if (!q.exec())
+        return out;
+    while (q.next()) {
+        QVariantMap row;
+        row.insert(QStringLiteral("ts"), q.value(0).toLongLong());
+        row.insert(QStringLiteral("stage"), q.value(1).toString());
         out.append(row);
     }
     return out;

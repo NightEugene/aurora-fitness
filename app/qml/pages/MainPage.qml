@@ -96,11 +96,19 @@ Page {
     function reload() {
         today = storage.todaySummary()
         week = storage.dailySummaries(7)
-        sleep = storage.sleepSessions(7)
+        // Сессии без фаз (например, дневная дрёмота) не показываем
+        var all = storage.sleepSessions(7)
+        var nn = []
+        for (var i = 0; i < all.length; i++) {
+            var s = all[i]
+            if ((s.deepMin || 0) + (s.lightMin || 0) + (s.remMin || 0)
+                    + (s.awakeMin || 0) > 0)
+                nn.push(s)
+        }
+        sleep = nn
         lastSync = bluez.lastSyncTimeText()
         ringCanvas.requestPaint()
         weekCanvas.requestPaint()
-        sleepCanvas.requestPaint()
     }
 
     function fmtDate(ts) {
@@ -529,7 +537,8 @@ Page {
                     width: (parent.width - Theme.paddingMedium) / 2
                     height: Theme.dp(210)
                     radius: Theme.dp(20)
-                    color: page.cardColor
+                    color: sleepMouse.pressed ? Theme.rgba(Theme.highlightColor, 0.3)
+                                              : page.cardColor
 
                     Column {
                         x: Theme.paddingLarge
@@ -559,6 +568,12 @@ Page {
                             color: Theme.secondaryColor
                             font.pixelSize: Theme.fontSizeExtraSmall
                         }
+                    }
+
+                    MouseArea {
+                        id: sleepMouse
+                        anchors.fill: parent
+                        onClicked: pageStack.push(Qt.resolvedUrl("SleepPage.qml"))
                     }
                 }
 
@@ -714,103 +729,6 @@ Page {
                                 ctx.fillStyle = Theme.secondaryColor
                                 ctx.fillText(page.fmtDate(days[i].ts), bx + barW / 2, height - 2)
                             }
-                        }
-                    }
-                }
-            }
-
-            // --- Сон: фазы последней сессии ---
-            Rectangle {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * x
-                height: sleepCol.height + 2 * Theme.paddingMedium
-                radius: Theme.dp(20)
-                color: page.cardColor
-                visible: page.sleep.length > 0 && page.sleep[0].sleepMin > 0
-
-                Column {
-                    id: sleepCol
-                    x: Theme.paddingLarge
-                    y: Theme.paddingMedium
-                    width: parent.width - 2 * x
-                    spacing: Theme.paddingSmall
-
-                    Row {
-                        width: parent.width
-                        Label {
-                            text: qsTr("Сон") + " · " + page.fmtDate(page.sleep.length > 0
-                                                                     ? page.sleep[0].bedTime : 0)
-                            color: Theme.primaryColor
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                    }
-
-                    Canvas {
-                        id: sleepCanvas
-                        width: parent.width
-                        height: Theme.dp(26)
-
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            if (page.sleep.length === 0)
-                                return
-                            var s = page.sleep[0]
-                            var segs = [
-                                [s.deepMin || 0, "#3f51b5"],
-                                [s.lightMin || 0, "#7c9bff"],
-                                [s.remMin || 0, "#b388ff"],
-                                [s.awakeMin || 0, "#ff8a65"]
-                            ]
-                            var total = 0
-                            for (var i = 0; i < segs.length; i++)
-                                total += segs[i][0]
-                            if (total <= 0)
-                                return
-
-                            var r = height / 2
-                            ctx.save()
-                            ctx.beginPath()
-                            ctx.moveTo(r, 0)
-                            ctx.lineTo(width - r, 0)
-                            ctx.arc(width - r, r, r, -Math.PI / 2, Math.PI / 2)
-                            ctx.lineTo(r, height)
-                            ctx.arc(r, r, r, Math.PI / 2, Math.PI * 1.5)
-                            ctx.closePath()
-                            ctx.clip()
-
-                            var x = 0
-                            for (i = 0; i < segs.length; i++) {
-                                var w = width * segs[i][0] / total
-                                if (w <= 0)
-                                    continue
-                                ctx.fillStyle = segs[i][1]
-                                ctx.fillRect(x, 0, w, height)
-                                x += w
-                            }
-                            ctx.restore()
-                        }
-                    }
-
-                    Label {
-                        width: parent.width
-                        wrapMode: Text.Wrap
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                        color: Theme.secondaryColor
-                        text: {
-                            if (page.sleep.length === 0)
-                                return ""
-                            var s = page.sleep[0]
-                            var parts = []
-                            if (s.deepMin > 0)
-                                parts.push(qsTr("глубокий") + " " + page.fmtHM(s.deepMin))
-                            if (s.lightMin > 0)
-                                parts.push(qsTr("лёгкий") + " " + page.fmtHM(s.lightMin))
-                            if (s.remMin > 0)
-                                parts.push("REM " + page.fmtHM(s.remMin))
-                            if (s.awakeMin > 0)
-                                parts.push(qsTr("бодрств.") + " " + page.fmtHM(s.awakeMin))
-                            return parts.join("  ·  ")
                         }
                     }
                 }
