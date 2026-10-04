@@ -15,9 +15,15 @@ class Storage : public QObject
     Q_OBJECT
 public:
     explicit Storage(QObject *parent = nullptr);
+    ~Storage() override;
 
     // Диспетчер по m["kind"]: dailySummary / dailyDetails / sleep / manualSamples
     void saveParsed(const QVariantMap &m);
+    void selectDevice(const QString &address);
+    void saveLiveReading(int steps, int heartRate);
+    void setLiveEstimation(bool calories, bool activity);
+    void recalculateCalories();
+    Q_INVOKABLE QVariantList hourlyActivity();
 
     Q_INVOKABLE QVariantMap todaySummary();
     Q_INVOKABLE QVariantList dailySummaries(int days);
@@ -35,6 +41,9 @@ private:
     void saveSleep(const QVariantMap &m);
     void saveManualSamples(const QVariantMap &m);
 
+    QString m_device;
+    bool m_estimateCalories = false;
+    bool m_estimateActivity = false;
     QSqlDatabase m_db;
     bool m_ready = false;
 };
