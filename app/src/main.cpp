@@ -12,6 +12,7 @@
 
 #include "bluezmanager.h"
 #include "notificationdaemon.h"
+#include "mprisbridge.h"
 #include "appsettings.h"
 
 namespace {
@@ -81,9 +82,11 @@ int main(int argc, char *argv[])
             if (mac.isEmpty()) {
                 qWarning() << "Использование: --daemon <MAC> [hex-key]"
                               "(либо предварительно подключитесь из GUI / другого CLI-режима)";
-                return 1;
             }
             NotificationDaemon daemon(&manager, mac);
+            MprisRelay media;
+            if (!media.start())
+                qWarning() << "MPRIS relay unavailable";
             if (!daemon.start())
                 return 1;
             return app->exec();
