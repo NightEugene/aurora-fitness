@@ -11,6 +11,8 @@ QMAKE_CXXFLAGS += -std=c++17
 CONFIG += auroraapp
 
 SOURCES += \
+    src/wearablechannel.cpp \
+    src/pinetimechannel.cpp \
     src/mprisbridge.cpp \
     src/bluezmanager.cpp \
     src/devicesmodel.cpp \
@@ -25,6 +27,8 @@ SOURCES += \
 
 HEADERS += \
     src/appsettings.h \
+    src/wearablechannel.h \
+    src/pinetimechannel.h \
     src/mprisbridge.h \
     src/bluezmanager.h \
     src/devicesmodel.h \

@@ -20,6 +20,7 @@ Page {
     property var today: ({})
     property var week: []
     property var sleep: []
+    property var hourly: []
     property string lastSync: ""
 
     readonly property color cardColor: Theme.rgba(Theme.primaryColor, 0.16)
@@ -97,10 +98,12 @@ Page {
         today = storage.todaySummary()
         week = storage.dailySummaries(7)
         sleep = storage.sleepSessions(7)
+        hourly = storage.hourlyActivity()
         lastSync = bluez.lastSyncTimeText()
         ringCanvas.requestPaint()
         weekCanvas.requestPaint()
         sleepCanvas.requestPaint()
+        hourlyCanvas.requestPaint()
     }
 
     function fmtDate(ts) {
@@ -158,7 +161,7 @@ Page {
             if (bluez.bandInfo.batteryLevel !== undefined && bluez.bandInfo.batteryLevel > 0)
                 s += " · " + bluez.bandInfo.batteryLevel + "%"
             if (page.lastSync.length > 0)
-                s += " · " + qsTr("синк в") + " " + page.lastSync
+                s += " · " + qsTr("обновлено") + " " + page.lastSync
             return s
         }
 
@@ -182,7 +185,7 @@ Page {
         AppBarButton {
             context: qsTr("Синхронизировать")
             icon.source: "image://theme/icon-m-refresh"
-            enabled: bluez.authStatus === qsTr("Аутентификация успешна")
+            enabled: bluez.ready
                      && !flick.syncRunning
             onClicked: bluez.syncActivity()
         }
@@ -197,14 +200,18 @@ Page {
 
                 PopupMenuItem {
                     text: qsTr("Настройки")
+                    icon.source: "image://theme/icon-m-setting"
                     onClicked: pageStack.push(Qt.resolvedUrl("SettingsPage.qml"))
                 }
                 PopupMenuItem {
                     text: qsTr("Цели")
+                    icon.source: "image://theme/icon-m-administrator"
                     onClicked: pageStack.push(Qt.resolvedUrl("GoalsPage.qml"))
                 }
+                PopupMenuDividerItem {}
                 PopupMenuItem {
                     text: qsTr("О приложении")
+                    icon.source: "image://theme/icon-m-about"
                     onClicked: pageStack.push(Qt.resolvedUrl("AboutPage.qml"))
                 }
             }
@@ -226,16 +233,16 @@ Page {
         // --- pull-to-refresh: синк при отпускании за порогом overscroll ---
         property bool pullArmed: false      // драг ушёл за порог
         property bool syncRunning: false    // синк уже идёт — повторы блокируем
-        readonly property bool authed: bluez.authStatus === qsTr("Аутентификация успешна")
+        readonly property bool ready: bluez.ready
         readonly property bool pullOver: contentY < -Theme.itemSizeLarge
 
         onContentYChanged: {
-            if (pullOver && authed && !syncRunning)
+            if (pullOver && ready && !syncRunning)
                 pullArmed = true
         }
         onMovementStarted: pullArmed = false
         onMovementEnded: {
-            if (pullArmed && authed && !syncRunning) {
+            if (pullArmed && ready && !syncRunning) {
                 refreshBuzz.start()
                 syncRunning = true
                 bluez.syncActivity()
@@ -250,6 +257,7 @@ Page {
             onActivitySyncStarted: flick.syncRunning = true
             onActivitySyncFinished: flick.syncRunning = false
             onDeviceError: flick.syncRunning = false
+            onBandReadyChanged: if (!bluez.ready) flick.syncRunning = false
         }
 
         Column {
@@ -384,13 +392,14 @@ Page {
                 // Ккал
                 Rectangle {
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: Theme.dp(210)
+                    height: caloriesContent.height + 2 * Theme.paddingLarge
                     radius: Theme.dp(20)
                     color: page.cardColor
 
                     Column {
+                        id: caloriesContent
                         x: Theme.paddingLarge
-                        y: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 2 * x
                         spacing: Theme.paddingSmall
 
@@ -437,13 +446,14 @@ Page {
                 // Активность (время активности, мин)
                 Rectangle {
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: Theme.dp(210)
+                    height: activityContent.height + 2 * Theme.paddingLarge
                     radius: Theme.dp(20)
                     color: page.cardColor
 
                     Column {
+                        id: activityContent
                         x: Theme.paddingLarge
-                        y: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 2 * x
                         spacing: Theme.paddingSmall
 
@@ -490,13 +500,14 @@ Page {
                 // Пульс
                 Rectangle {
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: Theme.dp(210)
+                    height: heartRateContent.height + 2 * Theme.paddingLarge
                     radius: Theme.dp(20)
                     color: page.cardColor
 
                     Column {
+                        id: heartRateContent
                         x: Theme.paddingLarge
-                        y: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 2 * x
                         spacing: Theme.paddingSmall
 
@@ -510,7 +521,7 @@ Page {
                             font.pixelSize: Theme.fontSizeExtraSmall
                         }
                         Label {
-                            text: page.val(page.today.avgHr)
+                            text: page.val(bluez.heartRate > 0 ? bluez.heartRate : page.today.avgHr)
                             color: page.accentHr
                             font.pixelSize: Theme.fontSizeExtraLarge
                             font.bold: true
@@ -526,14 +537,16 @@ Page {
 
                 // Сон
                 Rectangle {
+                    visible: bluez.supportsSleep
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: Theme.dp(210)
+                    height: sleepContent.height + 2 * Theme.paddingLarge
                     radius: Theme.dp(20)
                     color: page.cardColor
 
                     Column {
+                        id: sleepContent
                         x: Theme.paddingLarge
-                        y: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 2 * x
                         spacing: Theme.paddingSmall
 
@@ -564,14 +577,16 @@ Page {
 
                 // Стресс
                 Rectangle {
+                    visible: bluez.supportsStress
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: Theme.dp(210)
+                    height: stressContent.height + 2 * Theme.paddingLarge
                     radius: Theme.dp(20)
                     color: page.cardColor
 
                     Column {
+                        id: stressContent
                         x: Theme.paddingLarge
-                        y: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 2 * x
                         spacing: Theme.paddingSmall
 
@@ -600,14 +615,16 @@ Page {
 
                 // SpO2
                 Rectangle {
+                    visible: bluez.supportsSpO2
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: Theme.dp(210)
+                    height: spo2Content.height + 2 * Theme.paddingLarge
                     radius: Theme.dp(20)
                     color: page.cardColor
 
                     Column {
+                        id: spo2Content
                         x: Theme.paddingLarge
-                        y: Theme.paddingMedium
+                        anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 2 * x
                         spacing: Theme.paddingSmall
 
@@ -630,6 +647,61 @@ Page {
                             text: qsTr("средний, %")
                             color: Theme.secondaryColor
                             font.pixelSize: Theme.fontSizeExtraSmall
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * x
+                height: hourlyContent.height + 2 * Theme.paddingLarge
+                radius: Theme.dp(20)
+                color: page.cardColor
+                visible: bluez.estimatedActivity && page.hourly.length > 0
+
+                Column {
+                    id: hourlyContent
+                    x: Theme.paddingLarge
+                    y: Theme.paddingLarge
+                    width: parent.width - 2 * x
+                    spacing: Theme.paddingSmall
+
+                    Label {
+                        text: qsTr("Активность по часам")
+                        color: Theme.primaryColor
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+
+                    Canvas {
+                        id: hourlyCanvas
+                        width: parent.width
+                        height: Theme.dp(140)
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            var values = []
+                            var maxMinutes = 1
+                            for (var i = 0; i < 24; i++)
+                                values.push(0)
+                            for (i = 0; i < page.hourly.length; i++) {
+                                var sample = page.hourly[i]
+                                values[sample.hour] = sample.activeMin
+                                maxMinutes = Math.max(maxMinutes, sample.activeMin)
+                            }
+                            var slot = width / 24
+                            var chartHeight = height - Theme.fontSizeExtraSmall * 1.5
+                            ctx.font = Theme.fontSizeExtraSmall + "px sans-serif"
+                            ctx.textAlign = "center"
+                            for (i = 0; i < 24; i++) {
+                                var barHeight = Math.max(Theme.dp(2), chartHeight * values[i] / maxMinutes)
+                                ctx.fillStyle = values[i] > 0 ? page.accentActivity : Theme.rgba(Theme.primaryColor, 0.15)
+                                ctx.fillRect(i * slot + slot * 0.2, chartHeight - barHeight, slot * 0.6, barHeight)
+                                if (i % 6 === 0) {
+                                    ctx.fillStyle = Theme.secondaryColor
+                                    ctx.fillText(i, i * slot + slot / 2, height - Theme.dp(2))
+                                }
+                            }
                         }
                     }
                 }
@@ -726,7 +798,7 @@ Page {
                 height: sleepCol.height + 2 * Theme.paddingMedium
                 radius: Theme.dp(20)
                 color: page.cardColor
-                visible: page.sleep.length > 0 && page.sleep[0].sleepMin > 0
+                visible: bluez.supportsSleep && page.sleep.length > 0 && page.sleep[0].sleepMin > 0
 
                 Column {
                     id: sleepCol
