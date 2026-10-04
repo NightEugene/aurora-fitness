@@ -9,7 +9,9 @@
 set -e
 cd "$(dirname "$0")"
 
-DEVICE=defaultuser@192.168.2.15
+# По умолчанию — USB (rndis). По Wi-Fi:
+#   DEVICE=defaultuser@192.168.88.32 ./build.sh --deploy
+DEVICE=${DEVICE:-defaultuser@192.168.2.15}
 
 NAME=ru.nighteugene.aurorafitness
 VERSION=1.0.0

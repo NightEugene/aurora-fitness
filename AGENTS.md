@@ -10,8 +10,13 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   RPM в `build-docker-<arch>/RPMS/`).
 - `./build.sh --deploy` — scp на устройство + `sdk-deploy-rpm --silent`
   от defaultuser. Установка приложений ТОЛЬКО от defaultuser.
-- Устройство Fplus MP-67A27: `ssh defaultuser@192.168.2.15` (приложения,
+- Устройство Fplus MP-67A27: `ssh defaultuser@192.168.2.15` (USB; приложения,
   установка ТОЛЬКО от него), `ssh root@192.168.2.15` (journalctl/rfkill).
+  По Wi-Fi тоже можно: `DEVICE=defaultuser@<wifi-ip> ./build.sh --deploy`.
+  Wi-Fi-адрес выдаётся по DHCP (сейчас 192.168.88.32, смотреть на устройстве:
+  `grep -B2 "host LOCAL" /proc/net/fib_trie | grep -oE "([0-9.]+)" | sort -u`).
+  Нюанс: Wi-Fi устройства засыпает — с хоста Host Unreachable, пока устройство
+  само не пошлёт трафик (`busybox ping 192.168.88.24` с устройства будит ARP).
   Логи: Qt собран с journald — stdout/stderr CLI-режимов молчат ВСЕГДА,
   читать журнал:
   `ssh root@192.168.2.15 'journalctl --no-pager _COMM=ru.nighteugene. --since "-3min"'`.
