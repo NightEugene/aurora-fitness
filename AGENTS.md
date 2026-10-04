@@ -89,7 +89,14 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   ICON_REQUEST (subtype=15, status/pixelFormat/size) → заливаем иконку
   через DataUpload (тип 50, payload `0x00+type+md5+size+data+crc32`,
   части по chunkSize-4, каждая — chunked-передача на 0x0055 с шифрованием
-  counter=0). РАБОТАЕТ. Историческая грабля: ACK-и браслета на 0x0055
+  counter=0). РАБОТАЕТ. Иконки разные для каждого приложения: package =
+  id источника (hint x-aurora-application-id, иначе поиск локализованного
+  имени по /usr/share/applications/*.desktop — resolveAppPackage), иконка —
+  /usr/share/icons/hicolor/*/apps/<id>.png, fallback — наша. Браслет
+  запрашивает иконку в нескольких размерах (28/44/80) и кэширует по package.
+  Ограничение: GUI-relay в песочнице не видит /usr/share/icons — новые
+  иконки грузятся только когда браслетом владеет демон.
+  Историческая грабля: ACK-и браслета на 0x0055
   (`00 00 01 01` и т.п.) отбрасывались фильтром onCharacteristicValue —
   m_uploadPath должен быть в списке разрешённых путей.
 - Sync активности: списки файлов — health-команды type=8 (subtype 1/2 —

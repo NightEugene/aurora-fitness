@@ -679,13 +679,13 @@ void BluezManager::syncActivity()
 }
 
 void BluezManager::sendTestNotification(const QString &title, const QString &body,
-                                        const QString &appName)
+                                        const QString &appName, const QString &package)
 {
     if (!m_channel || !m_channel->isAuthenticated()) {
         setStatus(QStringLiteral("Сначала подключитесь и авторизуйтесь"));
         return;
     }
-    m_channel->sendNotification(appName, title, body);
+    m_channel->sendNotification(appName, title, body, package);
     setStatus(QStringLiteral("Уведомление отправлено"));
 }
 

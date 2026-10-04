@@ -76,7 +76,8 @@ public:
     Q_INVOKABLE void startBandAuth();
     Q_INVOKABLE void syncActivity();
     Q_INVOKABLE void sendTestNotification(const QString &title, const QString &body,
-                                          const QString &appName = QString());
+                                          const QString &appName = QString(),
+                                          const QString &package = QString());
 
     // --- поддержка фонового демона (--daemon) ---
     Q_INVOKABLE bool bandReady() const;     // подключён и авторизован

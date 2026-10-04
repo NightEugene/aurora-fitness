@@ -27,7 +27,8 @@ public:
     void sendHealthCommand(quint32 subtype, const QByteArray &healthProto);
 
     // Уведомление на браслет (type=9 subtype=0, Notification3)
-    void sendNotification(const QString &appName, const QString &title, const QString &body);
+    void sendNotification(const QString &appName, const QString &title, const QString &body,
+                          const QString &package = QString());
 
     // Вызывается BluezManager'ом при изменении Value любой характеристики
     void onCharacteristicValue(const QString &path, const QByteArray &value);

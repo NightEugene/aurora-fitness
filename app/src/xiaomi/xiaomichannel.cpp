@@ -507,14 +507,17 @@ void XiaomiChannel::sendHealthCommand(quint32 subtype, const QByteArray &healthP
     sendEncryptedCommand(cmd.data);
 }
 
-void XiaomiChannel::sendNotification(const QString &appName, const QString &title, const QString &body)
+void XiaomiChannel::sendNotification(const QString &appName, const QString &title,
+                                     const QString &body, const QString &package)
 {
     if (!m_authed)
         return;
 
     // Notification3
     pb::Writer n3;
-    n3.str(1, QStringLiteral("ru.nighteugene.aurorafitness")); // package
+    // package — идентификатор приложения-источника: по нему браслет
+    // запрашивает иконку (ICON_QUERY) и группирует уведомления
+    n3.str(1, package.isEmpty() ? QStringLiteral("ru.nighteugene.aurorafitness") : package);
     n3.str(2, appName.isEmpty() ? QStringLiteral("Aurora Fitness") : appName);
     n3.str(3, title);
     n3.str(4, QString());       // unknown4
@@ -601,14 +604,23 @@ QByteArray XiaomiChannel::buildIconBitmap(quint32 pixelFormat, quint32 size) con
         return QByteArray();
     }
 
+    // Иконка приложения-источника по его desktop-id; если не нашли — наша
     QImage img;
-    const QString name = QStringLiteral("/ru.nighteugene.aurorafitness.png");
-    for (const char *sz : {"108x108", "86x86", "128x128", "172x172"}) {
-        if (img.load(QStringLiteral("/usr/share/icons/hicolor/%1/apps").arg(QLatin1String(sz)) + name))
+    QStringList names;
+    if (!m_iconPackage.isEmpty())
+        names << m_iconPackage;
+    names << QStringLiteral("ru.nighteugene.aurorafitness");
+    for (const QString &pkg : names) {
+        const QString name = QStringLiteral("/") + pkg + QStringLiteral(".png");
+        for (const char *sz : {"128x128", "108x108", "86x86", "172x172"}) {
+            if (img.load(QStringLiteral("/usr/share/icons/hicolor/%1/apps").arg(QLatin1String(sz)) + name))
+                break;
+        }
+        if (!img.isNull())
             break;
     }
     if (img.isNull()) {
-        qWarning() << "XiaomiChannel: не удалось загрузить иконку приложения";
+        qWarning() << "XiaomiChannel: не удалось загрузить иконку для" << m_iconPackage;
         return QByteArray();
     }
 

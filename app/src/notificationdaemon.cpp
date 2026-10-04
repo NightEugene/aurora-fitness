@@ -7,6 +7,7 @@
 #include <QSocketNotifier>
 #include <QSettings>
 #include <QFile>
+#include <QDir>
 #include <QTextStream>
 #include <QDebug>
 #include <QDBusConnection>
@@ -161,7 +162,7 @@ void NotificationDaemon::handleMessage(DBusMessage *msg)
         return;
 
     // Notify(s app_name, u replaces_id, s app_icon, s summary, s body, as actions, a{sv} hints, i timeout)
-    QString appName, summary, body;
+    QString appName, summary, body, hintAppId;
     DBusMessageIter it;
     if (!dbus_message_iter_init(msg, &it))
         return;
@@ -176,13 +177,42 @@ void NotificationDaemon::handleMessage(DBusMessage *msg)
                 summary = v;
             else if (idx == 4)
                 body = v;
+        } else if (idx == 6
+                   && dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_ARRAY) {
+            // hints a{sv}: ищем id приложения-источника
+            DBusMessageIter arr;
+            dbus_message_iter_recurse(&it, &arr);
+            while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
+                DBusMessageIter entry;
+                dbus_message_iter_recurse(&arr, &entry);
+                if (dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_STRING) {
+                    const char *k = nullptr;
+                    dbus_message_iter_get_basic(&entry, &k);
+                    if (dbus_message_iter_next(&entry)
+                            && dbus_message_iter_get_arg_type(&entry) == DBUS_TYPE_VARIANT) {
+                        DBusMessageIter var;
+                        dbus_message_iter_recurse(&entry, &var);
+                        if (dbus_message_iter_get_arg_type(&var) == DBUS_TYPE_STRING) {
+                            const char *v = nullptr;
+                            dbus_message_iter_get_basic(&var, &v);
+                            const QString key = QString::fromUtf8(k ? k : "");
+                            if ((key == QLatin1String("x-aurora-application-id")
+                                 || key == QLatin1String("x-nemo-application-id")) && v)
+                                hintAppId = QString::fromUtf8(v);
+                        }
+                    }
+                }
+                if (!dbus_message_iter_has_next(&arr))
+                    break;
+                dbus_message_iter_next(&arr);
+            }
         }
         if (!dbus_message_iter_has_next(&it))
             break;
         dbus_message_iter_next(&it);
     }
 
-    handleNotify(appName, summary, body);
+    handleNotify(appName, summary, body, resolveAppPackage(appName, hintAppId));
 }
 
 void NotificationDaemon::handleNameSignal(DBusMessage *msg)
@@ -225,14 +255,16 @@ void NotificationDaemon::handleNameSignal(DBusMessage *msg)
 }
 
 void NotificationDaemon::handleNotify(const QString &appName,
-                                      const QString &summary, const QString &body)
+                                      const QString &summary, const QString &body,
+                                      const QString &package)
 {
     if (appName.startsWith(QLatin1String(OWN_APP_PREFIX)))
         return; // свои уведомления не пересылаем
     if (summary.isEmpty() && body.isEmpty())
         return;
 
-    qInfo() << "[daemon] Notify от" << appName << "—" << summary << "/" << body;
+    qInfo() << "[daemon] Notify от" << appName << "—" << summary << "/" << body
+            << "pkg:" << package;
 
     if (!m_notifyEnabled)
         return;
@@ -245,7 +277,7 @@ void NotificationDaemon::handleNotify(const QString &appName,
                            QString::fromLatin1(RELAY_NAME),
                            QDBusConnection::sessionBus());
         gui.call(QDBus::NoBlock, QStringLiteral("forwardNotification"),
-                 appName, summary, body);
+                 appName, summary, body, package);
         return;
     }
 
@@ -253,6 +285,7 @@ void NotificationDaemon::handleNotify(const QString &appName,
     m_pendingApp = appName;
     m_pendingTitle = summary;
     m_pendingBody = body;
+    m_pendingPackage = package;
     m_pendingNotification = true;
     flushPendingNotification();
 }
@@ -267,7 +300,8 @@ void NotificationDaemon::flushPendingNotification()
     }
     m_pendingNotification = false;
     qInfo() << "[daemon] отправка на браслет:" << m_pendingTitle;
-    m_bluez->sendTestNotification(m_pendingTitle, m_pendingBody, m_pendingApp);
+    m_bluez->sendTestNotification(m_pendingTitle, m_pendingBody, m_pendingApp,
+                                  m_pendingPackage);
 }
 
 void NotificationDaemon::ensureBandConnected()
@@ -385,7 +419,8 @@ QMap<QString, QString> NotificationDaemon::readConfFile() const
 }
 
 void NotificationDaemon::forwardNotification(const QString &appName,
-                                             const QString &title, const QString &body)
+                                             const QString &title, const QString &body,
+                                             const QString &package)
 {
     // Relay-режим (GUI): демон передал уведомление — шлём на браслет,
     // которым владеет GUI. Настройки перечитываем на каждый вызов.
@@ -400,6 +435,39 @@ void NotificationDaemon::forwardNotification(const QString &appName,
     m_pendingApp = appName;
     m_pendingTitle = title;
     m_pendingBody = body;
+    m_pendingPackage = package;
     m_pendingNotification = true;
     flushPendingNotification();
+}
+
+QString NotificationDaemon::resolveAppPackage(const QString &appName,
+                                              const QString &hintId) const
+{
+    if (!hintId.isEmpty())
+        return hintId;
+
+    // appName в Notify — локализованное имя приложения; ищем его в
+    // desktop-файлах, id = имя файла без .desktop (по нему лежит иконка)
+    static QMap<QString, QString> byName; // lower(name) -> desktop id
+    if (byName.isEmpty()) {
+        const QStringList files = QDir(QStringLiteral("/usr/share/applications"))
+                .entryList(QStringList() << QStringLiteral("*.desktop"), QDir::Files);
+        for (const QString &f : files) {
+            QFile file(QStringLiteral("/usr/share/applications/") + f);
+            if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+                continue;
+            const QString id = f.left(f.size() - 8); // без ".desktop"
+            QTextStream in(&file);
+            in.setCodec("UTF-8");
+            while (!in.atEnd()) {
+                const QString line = in.readLine();
+                if (!line.startsWith(QLatin1String("Name")))
+                    continue;
+                const int eq = line.indexOf(QLatin1Char('='));
+                if (eq > 0)
+                    byName.insert(line.mid(eq + 1).trimmed().toLower(), id);
+            }
+        }
+    }
+    return byName.value(appName.toLower());
 }

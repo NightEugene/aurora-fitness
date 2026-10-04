@@ -37,7 +37,7 @@ public:
 public slots:
     // Вызывается демоном по D-Bus, когда браслетом владеет GUI
     void forwardNotification(const QString &appName, const QString &title,
-                             const QString &body);
+                             const QString &body, const QString &package);
 
 private slots:
     void onDbusReadyRead();
@@ -49,7 +49,11 @@ private slots:
 private:
     void handleMessage(DBusMessage *msg);
     void handleNameSignal(DBusMessage *msg);
-    void handleNotify(const QString &appName, const QString &summary, const QString &body);
+    void handleNotify(const QString &appName, const QString &summary, const QString &body,
+                      const QString &package);
+    // id приложения-источника: hint x-aurora-application-id или
+    // поиск по имени в /usr/share/applications/*.desktop
+    QString resolveAppPackage(const QString &appName, const QString &hintId) const;
     void flushPendingNotification();
     void ensureBandConnected();
     void requestSync();
@@ -73,6 +77,7 @@ private:
     QString m_pendingApp;
     QString m_pendingTitle;
     QString m_pendingBody;
+    QString m_pendingPackage;
     bool m_syncPending = false;
     bool m_relayMode = false;
 };
