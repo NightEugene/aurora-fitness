@@ -3,13 +3,13 @@
 #ifndef XIAOMI_CHANNEL_H
 #define XIAOMI_CHANNEL_H
 
-#include <QObject>
+#include "../wearablechannel.h"
 #include <QByteArray>
 #include <QMap>
 
 // Канал протокола Xiaomi (Mi Band 8): транспорт поверх GATT + auth-handshake.
 // Реализация портирована из Gadgetbridge (XiaomiBleProtocolV1 / XiaomiAuthService).
-class XiaomiChannel : public QObject
+class XiaomiChannel : public WearableChannel
 {
     Q_OBJECT
 public:
@@ -33,6 +33,15 @@ public:
     void onCharacteristicValue(const QString &path, const QByteArray &value);
 
     bool isAuthenticated() const { return m_authed; }
+    bool ready() const override { return m_authed; }
+    bool requiresAuth() const override { return true; }
+    QVariantMap capabilities() const override {
+        return {{QStringLiteral("sleep"), true}, {QStringLiteral("stress"), true},
+                {QStringLiteral("spo2"), true}, {QStringLiteral("nativeCalories"), true},
+                {QStringLiteral("nativeActivity"), true}};
+    }
+    void start() override {}
+    void sync() override { startActivityFetch(); }
 
     // --- интерфейс для DataUpload (характеристика 0x0055, type=22) ---
     void sendDataUploadCommand(const QByteArray &dataUploadProto);
@@ -42,14 +51,7 @@ public:
     int uploadWriteSize() const; // макс. размер записи (MTU-3)
 
 signals:
-    void authStatusChanged(const QString &status);
     void authenticated();
-    void authFailed(const QString &reason);
-    void batteryReceived(int level, int state);
-    void deviceInfoReceived(const QString &serial, const QString &firmware, const QString &model);
-    void activityFileParsed(const QVariantMap &data);
-    void activityFetchProgress(const QString &status);
-    void activityFetchFinished();
 
 private:
     enum class State { Idle, WaitWatchNonce, WaitConfirm, Authed };
