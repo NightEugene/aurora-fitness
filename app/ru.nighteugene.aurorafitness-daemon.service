@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 [Unit]
-Description=Aurora Fitness: демон пересылки уведомлений и автосинка Mi Band
+Description=Aurora Fitness: уведомления, синхронизация и управление музыкой
 
 [Service]
 ExecStart=/usr/bin/ru.nighteugene.aurorafitness --daemon
