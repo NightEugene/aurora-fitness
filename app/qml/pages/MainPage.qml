@@ -30,6 +30,7 @@ Page {
     readonly property color accentSleep: "#7c4dff"
     readonly property color accentSpo2: "#03a9f4"
     readonly property color accentStress: "#26a69a"
+    readonly property color accentBattery: "#4caf50"
     readonly property color goalDone: "#4caf50"
     // Яркие варианты — при превышении цели
     readonly property color accentKcalBright: "#ffca28"
@@ -384,15 +385,24 @@ Page {
 
             // --- Карточки метрик 2x2 ---
             Grid {
+                id: metricsGrid
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * x
                 columns: 2
                 spacing: Theme.paddingMedium
+                readonly property int metricCount: 3 + (bluez.supportsSleep ? 1 : 0)
+                                                    + (bluez.supportsStress ? 1 : 0)
+                                                    + (bluez.supportsSpO2 ? 1 : 0)
+                readonly property real cardHeight: Math.max(caloriesContent.height, activityContent.height,
+                                                           heartRateContent.height, sleepContent.height,
+                                                           stressContent.height, spo2Content.height,
+                                                           batteryContent.height)
+                                                   + 2 * Theme.paddingLarge
 
                 // Ккал
                 Rectangle {
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: caloriesContent.height + 2 * Theme.paddingLarge
+                    height: metricsGrid.cardHeight
                     radius: Theme.dp(20)
                     color: page.cardColor
 
@@ -446,7 +456,7 @@ Page {
                 // Активность (время активности, мин)
                 Rectangle {
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: activityContent.height + 2 * Theme.paddingLarge
+                    height: metricsGrid.cardHeight
                     radius: Theme.dp(20)
                     color: page.cardColor
 
@@ -500,7 +510,7 @@ Page {
                 // Пульс
                 Rectangle {
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: heartRateContent.height + 2 * Theme.paddingLarge
+                    height: metricsGrid.cardHeight
                     radius: Theme.dp(20)
                     color: page.cardColor
 
@@ -539,7 +549,7 @@ Page {
                 Rectangle {
                     visible: bluez.supportsSleep
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: sleepContent.height + 2 * Theme.paddingLarge
+                    height: metricsGrid.cardHeight
                     radius: Theme.dp(20)
                     color: page.cardColor
 
@@ -579,7 +589,7 @@ Page {
                 Rectangle {
                     visible: bluez.supportsStress
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: stressContent.height + 2 * Theme.paddingLarge
+                    height: metricsGrid.cardHeight
                     radius: Theme.dp(20)
                     color: page.cardColor
 
@@ -617,7 +627,7 @@ Page {
                 Rectangle {
                     visible: bluez.supportsSpO2
                     width: (parent.width - Theme.paddingMedium) / 2
-                    height: spo2Content.height + 2 * Theme.paddingLarge
+                    height: metricsGrid.cardHeight
                     radius: Theme.dp(20)
                     color: page.cardColor
 
@@ -645,6 +655,58 @@ Page {
                         }
                         Label {
                             text: qsTr("средний, %")
+                            color: Theme.secondaryColor
+                            font.pixelSize: Theme.fontSizeExtraSmall
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: metricsGrid.metricCount % 2 === 1
+                    width: (parent.width - Theme.paddingMedium) / 2
+                    height: metricsGrid.cardHeight
+                    radius: Theme.dp(20)
+                    color: page.cardColor
+                    readonly property int level: bluez.bandInfo.batteryLevel !== undefined
+                                                 ? bluez.bandInfo.batteryLevel : -1
+
+                    Column {
+                        id: batteryContent
+                        x: Theme.paddingLarge
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 2 * x
+                        spacing: Theme.paddingSmall
+
+                        Rectangle {
+                            width: Theme.dp(14); height: width; radius: width / 2
+                            color: page.accentBattery
+                        }
+                        Label {
+                            text: qsTr("Батарея")
+                            color: Theme.secondaryColor
+                            font.pixelSize: Theme.fontSizeExtraSmall
+                        }
+                        Label {
+                            text: batteryContent.parent.level >= 0 ? batteryContent.parent.level : "—"
+                            color: page.accentBattery
+                            font.pixelSize: Theme.fontSizeExtraLarge
+                            font.bold: true
+                        }
+                        Rectangle {
+                            width: parent.width
+                            height: Theme.dp(6)
+                            radius: height / 2
+                            color: Theme.rgba(page.accentBattery, 0.2)
+
+                            Rectangle {
+                                width: parent.width * Math.max(0, Math.min(100, batteryContent.parent.level)) / 100
+                                height: parent.height
+                                radius: parent.radius
+                                color: page.accentBattery
+                            }
+                        }
+                        Label {
+                            text: qsTr("из") + " 100 %"
                             color: Theme.secondaryColor
                             font.pixelSize: Theme.fontSizeExtraSmall
                         }
