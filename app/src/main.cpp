@@ -220,6 +220,14 @@ int main(int argc, char *argv[])
     const bool bandNameOwned = requestBandName();
     qInfo() << "D-Bus имя браслета:" << (bandNameOwned ? "захвачено" : "НЕ захвачено");
     QTimer::singleShot(500, &manager, &BluezManager::autoConnectLast);
+
+    // Пока GUI владеет браслетом, демон не шлёт уведомления сам, а передаёт
+    // их сюда вызовом forwardNotification (eavesdrop из песочницы GUI
+    // недоступен — на сессионной шине сидит xdg-dbus-proxy)
+    NotificationDaemon relay(&manager,
+            appSettings().value(QStringLiteral("miband8/lastAddress")).toString());
+    relay.setRelayMode(true);
+    relay.start();
     // --qml pages/Foo.qml — отладочный запуск с другой стартовой страницей
     QString initialQml = QStringLiteral("qml/AuroraFitness.qml");
     const int qmlIdx = cliArgs.indexOf(QStringLiteral("--qml"));

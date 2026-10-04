@@ -129,8 +129,15 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   сессионной шине. Демон просит его с ALLOW_REPLACEMENT (в очереди, пока
   жив GUI); GUI и CLI (--read/--auth/--sync/--notify) захватывают через
   прямой RequestName с флагами 3 (Qt 5.6 `registerService` на этой сборке
-  молча возвращает false — НЕ использовать). Демон по NameLost отключается;
-  подключение GUI/CLI — через `BluezManager::connectToBandWhenFree`
+  молча возвращает false — НЕ использовать). Демон по NameLost отключается
+  и СНОВА встаёт в очередь (request_name без DO_NOT_QUEUE — иначе после
+  закрытия GUI имя остаётся ничьим и демон молчит до рестарта).
+  Пока браслетом владеет GUI, демон НЕ молчит, а передаёт каждое
+  уведомление вызовом `forwardNotification` на `ru.nighteugene.aurorafitness.gui`
+  (/notify, Q_CLASSINFO-интерфейс) — GUI поднимает это имя в relay-режиме
+  NotificationDaemon (без eavesdrop: сессионная шина песочницы идёт через
+  xdg-dbus-proxy, eavesdrop там недоступен). Подключение GUI/CLI — через
+  `BluezManager::connectToBandWhenFree`
   (Disconnect демона асинхронен, иначе его обрыв линка попадает в середину
   чужого Connect). Песочница sailjail владение именем НЕ блокирует
   (проверено: `sailjail -p ...desktop -- /usr/bin/...`).

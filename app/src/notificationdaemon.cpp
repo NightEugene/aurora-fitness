@@ -9,6 +9,8 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
+#include <QDBusConnection>
+#include <QDBusInterface>
 
 #include <dbus/dbus.h>
 
@@ -17,6 +19,8 @@ namespace {
 const char MATCH_RULE[] =
         "type='method_call',interface='org.freedesktop.Notifications',member='Notify',eavesdrop='true'";
 const char OWN_APP_PREFIX[] = "ru.nighteugene.aurorafitness";
+// Relay-имя GUI: демон шлёт сюда уведомления, когда браслетом владеет GUI
+const char RELAY_NAME[] = "ru.nighteugene.aurorafitness.gui";
 // Арбитраж владения браслетом: владелец этого имени на сессионной шине —
 // единственный, кто работает с BLE-линком (GUI отбирает у демона)
 const char BAND_NAME[] = "ru.nighteugene.aurorafitness.band";
@@ -50,6 +54,25 @@ NotificationDaemon::~NotificationDaemon()
 
 bool NotificationDaemon::start()
 {
+    if (m_relayMode) {
+        // Ретранслятор внутри GUI: без eavesdrop и без имени браслета —
+        // принимает forwardNotification от демона и шлёт на браслет,
+        // которым владеет GUI. registerService() на Qt 5.6 сломан — имя
+        // просим напрямую через RequestName (флаги 0).
+        QDBusConnection bus = QDBusConnection::sessionBus();
+        QDBusInterface dbusIface(QStringLiteral("org.freedesktop.DBus"),
+                                 QStringLiteral("/org/freedesktop/DBus"),
+                                 QStringLiteral("org.freedesktop.DBus"), bus);
+        dbusIface.call(QStringLiteral("RequestName"),
+                       QString::fromLatin1(RELAY_NAME), 0u);
+        bus.registerObject(QStringLiteral("/notify"), this,
+                           QDBusConnection::ExportAllSlots);
+        m_bandAllowed = true; // браслетом владеет сам GUI
+        reloadSettings();
+        qInfo() << "[relay] пересылка уведомлений через GUI активна, MAC:" << m_mac;
+        return true;
+    }
+
     DBusError err;
     dbus_error_init(&err);
     m_conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
@@ -181,6 +204,16 @@ void NotificationDaemon::handleNameSignal(DBusMessage *msg)
         m_bandAllowed = false;
         m_connecting = false;
         m_bluez->disconnectBand();
+        // Встаём в очередь за именем: получим NameAcquired, когда GUI
+        // закроется или свернётся и отпустит имя
+        DBusError err;
+        dbus_error_init(&err);
+        dbus_bus_request_name(m_conn, BAND_NAME, DBUS_NAME_FLAG_ALLOW_REPLACEMENT, &err);
+        if (dbus_error_is_set(&err)) {
+            qWarning() << "[daemon] request_name (в очередь) failed:" << err.message;
+            dbus_error_free(&err);
+        }
+        dbus_connection_flush(m_conn);
         return;
     }
 
@@ -203,6 +236,18 @@ void NotificationDaemon::handleNotify(const QString &appName,
 
     if (!m_notifyEnabled)
         return;
+
+    if (!m_bandAllowed) {
+        // Браслетом владеет GUI — передаём уведомление ему через шину.
+        // GUI в песочнице (xdg-dbus-proxy), eavesdrop там недоступен.
+        QDBusInterface gui(QString::fromLatin1(RELAY_NAME),
+                           QStringLiteral("/notify"),
+                           QString::fromLatin1(RELAY_NAME),
+                           QDBusConnection::sessionBus());
+        gui.call(QDBus::NoBlock, QStringLiteral("forwardNotification"),
+                 appName, summary, body);
+        return;
+    }
 
     // Запоминаем последнее уведомление — уйдёт на браслет, когда тот будет готов
     m_pendingApp = appName;
@@ -337,4 +382,24 @@ QMap<QString, QString> NotificationDaemon::readConfFile() const
                    line.mid(eq + 1).trimmed());
     }
     return out;
+}
+
+void NotificationDaemon::forwardNotification(const QString &appName,
+                                             const QString &title, const QString &body)
+{
+    // Relay-режим (GUI): демон передал уведомление — шлём на браслет,
+    // которым владеет GUI. Настройки перечитываем на каждый вызов.
+    reloadSettings();
+    if (!m_notifyEnabled)
+        return;
+    if (appName.startsWith(QLatin1String(OWN_APP_PREFIX)))
+        return;
+    if (title.isEmpty() && body.isEmpty())
+        return;
+    qInfo() << "[relay] пересылка на браслет:" << appName << "—" << title;
+    m_pendingApp = appName;
+    m_pendingTitle = title;
+    m_pendingBody = body;
+    m_pendingNotification = true;
+    flushPendingNotification();
 }
