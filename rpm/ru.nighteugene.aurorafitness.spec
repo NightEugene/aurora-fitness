@@ -1,5 +1,5 @@
 Name: ru.nighteugene.aurorafitness
-Summary: Фитнес-клиент для Mi Band (BLE)
+Summary: Фитнес-клиент для Mi Band и PineTime (BLE)
 Version: 1.0.0
 Release: 1
 License: BSD-3-Clause
@@ -16,8 +16,9 @@ BuildRequires: pkgconfig(dbus-1)
 Requires: sailfishsilica-qt5 >= 0.10.9
 
 %description
-Фитнес-приложение для ОС Аврора с поддержкой носимых устройств по Bluetooth Low Energy.
-Прототип: подключение к Mi Band 8 через BlueZ D-Bus API.
+Фитнес-приложение для ОС Аврора с поддержкой носимых устройств
+по Bluetooth Low Energy.
+Подключение к Mi Band 8 и PineTime с InfiniTime через BlueZ D-Bus API.
 
 %prep
 %autosetup
