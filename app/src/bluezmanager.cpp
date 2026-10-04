@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "bluezmanager.h"
-#include "xiaomi/xiaomichannel.h"
+#include "wearablechannel.h"
 
 #include <QtDBus>
 #include <QSettings>
@@ -17,6 +17,8 @@
 #include <QDir>
 #include <QFile>
 #include <QDebug>
+#include <limits>
+#include <cmath>
 
 namespace {
 const char BLUEZ_SERVICE[] = "org.bluez";
@@ -35,11 +37,6 @@ const QMap<QString, QString> INFO_CHARS = {
     {QStringLiteral("00002a29-0000-1000-8000-00805f9b34fb"), QStringLiteral("manufacturer")},
 };
 const QString BATTERY_CHAR = QStringLiteral("00002a19-0000-1000-8000-00805f9b34fb");
-const QString XIAOMI_SERVICE = QStringLiteral("0000fe95-0000-1000-8000-00805f9b34fb");
-const QString XIAOMI_CHAR_READ = QStringLiteral("00000051-0000-1000-8000-00805f9b34fb");
-const QString XIAOMI_CHAR_WRITE = QStringLiteral("00000052-0000-1000-8000-00805f9b34fb");
-const QString XIAOMI_CHAR_ACTIVITY = QStringLiteral("00000053-0000-1000-8000-00805f9b34fb");
-const QString XIAOMI_CHAR_DATA_UPLOAD = QStringLiteral("00000055-0000-1000-8000-00805f9b34fb");
 }
 
 BluezManager::BluezManager(QObject *parent) : QObject(parent)
@@ -51,6 +48,7 @@ BluezManager::BluezManager(QObject *parent) : QObject(parent)
     connect(&m_resolveTimer, &QTimer::timeout, this, &BluezManager::onResolveTimeout);
 
     QSettings settings = appSettings();
+    m_capabilities = settings.value(QStringLiteral("device/capabilities")).toMap();
     m_authKeyHex = settings.value(QStringLiteral("miband8/authKey")).toString();
     m_stepsGoal = settings.value(QStringLiteral("stepsGoal"), 10000).toInt();
     m_caloriesGoal = settings.value(QStringLiteral("ui/caloriesGoal"), 500).toInt();
@@ -80,7 +78,7 @@ void BluezManager::setStatus(const QString &status)
     if (m_userStatus.endsWith(QStringLiteral("…"))) {
         const bool authDone = status == QStringLiteral("Аутентификация успешна")
                 && m_userStatus == QStringLiteral("Аутентификация…");
-        const bool syncDone = status.startsWith(QStringLiteral("Синхронизация завершена"))
+        const bool syncDone = status.startsWith(QStringLiteral("Данные обновлены"))
                 && m_userStatus.startsWith(QStringLiteral("Запрос"));
         if (authDone || syncDone) {
             m_userStatus.clear();
@@ -260,7 +258,6 @@ void BluezManager::onPropertiesChanged(const QString &interface, const QVariantM
     }
 
     if (interface == QString::fromLatin1(IFACE_GATT_CHAR)) {
-        // Нотификации GATT-характеристик → каналу Xiaomi
         if (m_channel && props.contains(QStringLiteral("Value")))
             m_channel->onCharacteristicValue(message.path(),
                                              props.value(QStringLiteral("Value")).toByteArray());
@@ -285,10 +282,18 @@ void BluezManager::onPropertiesChanged(const QString &interface, const QVariantM
             && !props.value(QStringLiteral("Connected")).toBool()
             && !m_connectedAddress.isEmpty()) {
         if (m_channel) {
-            m_channel->deleteLater();
+            delete m_channel;
             m_channel = nullptr;
         }
+        m_resolveTimer.stop();
+        m_pendingPath.clear();
         m_connectedAddress.clear();
+        m_bandInfo.remove(QStringLiteral("heartRate"));
+        m_authStatus.clear();
+        emit authStatusChanged();
+        emit bandReadyChanged();
+        emit bandInfoChanged();
+        emit servicesChanged();
         emit connectedAddressChanged();
         setStatus(QStringLiteral("Соединение разорвано"));
         setBusy(false);
@@ -314,15 +319,18 @@ bool BluezManager::deviceKnown(const QString &path) const
 void BluezManager::connectToBand(const QString &address)
 {
     if (m_channel) {
-        m_channel->deleteLater();
+        delete m_channel;
         m_channel = nullptr;
     }
+    m_authStatus.clear();
+    emit authStatusChanged();
+    emit bandReadyChanged();
     const QString path = devicePathForAddress(address);
     m_pendingPath = path;
 
     // Запоминаем последний MAC — демон берёт его из QSettings
     QSettings settings = appSettings();
-    settings.setValue(QStringLiteral("miband8/lastAddress"), address);
+    settings.setValue(QStringLiteral("device/lastAddress"), address);
     m_services.clear();
     emit servicesChanged();
     m_bandInfo.clear();
@@ -400,7 +408,7 @@ void BluezManager::onResolveTimeout()
 
 void BluezManager::finishConnect()
 {
-    if (m_pendingPath.isEmpty())
+    if (m_pendingPath.isEmpty() || m_channel)
         return;
 
     QDBusInterface dev(QString::fromLatin1(BLUEZ_SERVICE), m_pendingPath,
@@ -410,9 +418,10 @@ void BluezManager::finishConnect()
 
     enumerateServices();
     readBandInfo();
-    setupXiaomiChannel();
+    setupWearableChannel();
 
     setStatus(QStringLiteral("Подключено: %1").arg(m_connectedAddress));
+    emit servicesChanged();
     emit deviceReady();
 }
 
@@ -522,8 +531,8 @@ void BluezManager::setAuthKey(const QString &hexKey)
 
 void BluezManager::startBandAuth()
 {
-    if (!m_channel) {
-        setStatus(QStringLiteral("Сначала подключитесь к браслету"));
+    if (!m_channel || !m_channel->requiresAuth()) {
+        setStatus(QStringLiteral("Устройству не требуется ключ или оно не подключено"));
         return;
     }
     const QByteArray key = QByteArray::fromHex(m_authKeyHex.toLatin1());
@@ -535,55 +544,66 @@ void BluezManager::startBandAuth()
     m_channel->startAuth();
 }
 
-void BluezManager::setupXiaomiChannel()
+void BluezManager::setupWearableChannel()
 {
-    // Ищем сервис FE95 и характеристики 0051 (notify) / 0052 (write) / 0053 (activity) / 0055 (data upload)
-    QString readPath, writePath, activityPath, uploadPath;
-    for (const QVariant &s : m_services) {
-        const QVariantMap service = s.toMap();
-        if (service.value(QStringLiteral("uuid")).toString() != XIAOMI_SERVICE)
-            continue;
-        const QVariantList chars = service.value(QStringLiteral("characteristics")).toList();
-        for (const QVariant &c : chars) {
-            const QVariantMap ch = c.toMap();
-            const QString uuid = ch.value(QStringLiteral("uuid")).toString();
-            if (uuid == XIAOMI_CHAR_READ)
-                readPath = ch.value(QStringLiteral("path")).toString();
-            else if (uuid == XIAOMI_CHAR_WRITE)
-                writePath = ch.value(QStringLiteral("path")).toString();
-            else if (uuid == XIAOMI_CHAR_ACTIVITY)
-                activityPath = ch.value(QStringLiteral("path")).toString();
-            else if (uuid == XIAOMI_CHAR_DATA_UPLOAD)
-                uploadPath = ch.value(QStringLiteral("path")).toString();
-        }
+    m_channel = createWearableChannel(m_services, this);
+    if (!m_channel) {
+        setBusy(false);
+        return;
     }
-
-    if (readPath.isEmpty() || writePath.isEmpty())
-        return; // не Xiaomi-устройство
-
-    m_channel = new XiaomiChannel(this);
-    m_channel->setup(readPath, writePath, activityPath, uploadPath);
-
-    connect(m_channel, &XiaomiChannel::authStatusChanged, this, [this](const QString &s) {
+    const QString storageId = m_channel->storageId(m_connectedAddress);
+    m_capabilities = m_channel->capabilities();
+    appSettings().setValue(QStringLiteral("device/capabilities"), m_capabilities);
+    m_storage.selectDevice(storageId);
+    m_storage.setLiveEstimation(estimatedCalories(), estimatedActivity());
+    emit capabilitiesChanged();
+    appSettings().setValue(QStringLiteral("device/storageId"), storageId);
+    connect(m_channel, &WearableChannel::readyChanged, this, [this]() {
+        if (m_channel->ready()) {
+            if (!m_channel->requiresAuth()) {
+                m_authStatus = QStringLiteral("Подключено");
+                emit authStatusChanged();
+                setStatus(m_authStatus);
+            }
+            setBusy(false);
+        }
+        emit bandReadyChanged();
+    });
+    connect(m_channel, &WearableChannel::stepsReceived, this, [this](quint32 steps) {
+        if (steps > quint32(std::numeric_limits<int>::max()))
+            return;
+        m_storage.saveLiveReading(int(steps), -1);
+    });
+    connect(m_channel, &WearableChannel::heartRateReceived, this, [this](int bpm) {
+        m_bandInfo.insert(QStringLiteral("heartRate"), bpm);
+        m_storage.saveLiveReading(-1, bpm);
+        emit bandInfoChanged();
+    });
+    connect(m_channel, &WearableChannel::error, this, [this](const QString &message) {
+        setBusy(false);
+        setStatus(message);
+        emit deviceError(message);
+    });
+    connect(m_channel, &WearableChannel::authStatusChanged, this, [this](const QString &s) {
         m_authStatus = s;
         emit authStatusChanged();
         setStatus(s);
     });
-    connect(m_channel, &XiaomiChannel::authFailed, this, [this](const QString &s) {
+    connect(m_channel, &WearableChannel::authFailed, this, [this](const QString &s) {
         m_authStatus = s;
         emit authStatusChanged();
         setStatus(s);
         setBusy(false);
         emit deviceError(s);
     });
-    connect(m_channel, &XiaomiChannel::batteryReceived, this, [this](int level, int state) {
+    connect(m_channel, &WearableChannel::batteryReceived, this, [this](int level, int state) {
         m_bandInfo.insert(QStringLiteral("batteryLevel"), level);
         m_bandInfo.insert(QStringLiteral("batteryState"), state);
         emit bandInfoChanged();
         setBusy(false); // auth завершена; дальше синк крутит свой индикатор
         emit bandBatteryReceived(level, state);
     });
-    connect(m_channel, &XiaomiChannel::deviceInfoReceived, this,
+    connect(m_channel, &WearableChannel::deviceInfoReceived, this,
             [this](const QString &serial, const QString &firmware, const QString &model) {
         if (!serial.isEmpty())
             m_bandInfo.insert(QStringLiteral("serialNumber"), serial);
@@ -593,24 +613,25 @@ void BluezManager::setupXiaomiChannel()
             m_bandInfo.insert(QStringLiteral("modelNumber"), model);
         emit bandInfoChanged();
     });
-    connect(m_channel, &XiaomiChannel::activityFileParsed, this, [this](const QVariantMap &data) {
+    connect(m_channel, &WearableChannel::activityFileParsed, this, [this](const QVariantMap &data) {
         m_activityResults.append(data);
         m_storage.saveParsed(data);
         emit activityResultsChanged();
     });
-    connect(m_channel, &XiaomiChannel::activityFetchProgress, this,
+    connect(m_channel, &WearableChannel::activityFetchProgress, this,
             [this](const QString &s) { setStatus(s); });
-    connect(m_channel, &XiaomiChannel::activityFetchFinished, this,
+    connect(m_channel, &WearableChannel::activityFetchFinished, this,
             [this]() {
-        setStatus(QStringLiteral("Синхронизация завершена: %1 файлов").arg(m_activityResults.size()));
+        setStatus(QStringLiteral("Данные обновлены"));
         QSettings settings = appSettings();
-        settings.setValue(QStringLiteral("miband8/lastSyncTime"),
+        settings.setValue(QStringLiteral("device/lastSyncTime"),
                           QDateTime::currentDateTime().toString(Qt::ISODate));
         emit activitySyncFinished();
         notifyGoalsAchieved();
     });
 
-    if (!m_authKeyHex.isEmpty())
+    m_channel->start();
+    if (m_channel->requiresAuth() && !m_authKeyHex.isEmpty())
         startBandAuth();
 }
 
@@ -668,20 +689,20 @@ void BluezManager::sendSystemNotification(const QString &summary, const QString 
 
 void BluezManager::syncActivity()
 {
-    if (!m_channel || !m_channel->isAuthenticated()) {
+    if (!m_channel || !m_channel->ready()) {
         setStatus(QStringLiteral("Сначала подключитесь и авторизуйтесь"));
         return;
     }
     m_activityResults.clear();
     emit activityResultsChanged();
     emit activitySyncStarted();
-    m_channel->startActivityFetch();
+    m_channel->sync();
 }
 
 void BluezManager::sendTestNotification(const QString &title, const QString &body,
                                         const QString &appName)
 {
-    if (!m_channel || !m_channel->isAuthenticated()) {
+    if (!m_channel || !m_channel->ready()) {
         setStatus(QStringLiteral("Сначала подключитесь и авторизуйтесь"));
         return;
     }
@@ -691,7 +712,40 @@ void BluezManager::sendTestNotification(const QString &title, const QString &bod
 
 bool BluezManager::bandReady() const
 {
-    return m_channel && m_channel->isAuthenticated();
+    return m_channel && m_channel->ready();
+}
+
+bool BluezManager::requiresAuth() const
+{
+    return m_channel && m_channel->requiresAuth();
+}
+
+double BluezManager::weightKg() const
+{
+    return appSettings().value(QStringLiteral("profile/weightKg"), 70.0).toDouble();
+}
+
+int BluezManager::heightCm() const
+{
+    return appSettings().value(QStringLiteral("profile/heightCm"), 170).toInt();
+}
+
+void BluezManager::setWeightKg(double value)
+{
+    if (!std::isfinite(value) || value < 20 || value > 300 || value == weightKg())
+        return;
+    appSettings().setValue(QStringLiteral("profile/weightKg"), value);
+    m_storage.recalculateCalories();
+    emit profileChanged();
+}
+
+void BluezManager::setHeightCm(int value)
+{
+    if (value < 80 || value > 250 || value == heightCm())
+        return;
+    appSettings().setValue(QStringLiteral("profile/heightCm"), value);
+    m_storage.recalculateCalories();
+    emit profileChanged();
 }
 
 bool BluezManager::powerOnAdapter()
@@ -771,7 +825,7 @@ bool BluezManager::daemonSyncEnabled() const
 void BluezManager::autoConnectLast()
 {
     const QSettings settings = appSettings();
-    const QString address = settings.value(QStringLiteral("miband8/lastAddress")).toString();
+    const QString address = settings.value(QStringLiteral("device/lastAddress"), settings.value(QStringLiteral("miband8/lastAddress"))).toString();
     if (address.isEmpty())
         return;
 
@@ -780,7 +834,9 @@ void BluezManager::autoConnectLast()
 
     // Разовый автосинк после первой успешной auth (battery приходит сразу после неё)
     QMetaObject::Connection *conn = new QMetaObject::Connection;
-    *conn = connect(this, &BluezManager::bandBatteryReceived, this, [this, conn](int, int) {
+    *conn = connect(this, &BluezManager::bandReadyChanged, this, [this, conn]() {
+        if (!bandReady())
+            return;
         disconnect(*conn);
         delete conn;
         syncActivity();
@@ -813,7 +869,7 @@ QString BluezManager::lastSyncTimeText() const
 {
     const QSettings settings = appSettings();
     const QDateTime t = QDateTime::fromString(
-                settings.value(QStringLiteral("miband8/lastSyncTime")).toString(), Qt::ISODate);
+                settings.value(QStringLiteral("device/lastSyncTime"), settings.value(QStringLiteral("miband8/lastSyncTime"))).toString(), Qt::ISODate);
     if (!t.isValid())
         return QString();
     if (t.date() == QDate::currentDate())
@@ -878,15 +934,24 @@ void BluezManager::setActivityGoal(int goal)
 void BluezManager::disconnectBand()
 {
     if (m_channel) {
-        m_channel->deleteLater();
+        delete m_channel;
         m_channel = nullptr;
     }
-    if (m_pendingPath.isEmpty())
-        return;
-    QDBusInterface dev(QString::fromLatin1(BLUEZ_SERVICE), m_pendingPath,
-                       QString::fromLatin1(IFACE_DEVICE), QDBusConnection::systemBus());
-    dev.asyncCall(QStringLiteral("Disconnect"));
+    if (!m_pendingPath.isEmpty()) {
+        QDBusInterface dev(QString::fromLatin1(BLUEZ_SERVICE), m_pendingPath,
+                           QString::fromLatin1(IFACE_DEVICE), QDBusConnection::systemBus());
+        dev.asyncCall(QStringLiteral("Disconnect"));
+    }
     m_pendingPath.clear();
+    m_resolveTimer.stop();
+    m_waitingForDevice = false;
+    m_bandInfo.remove(QStringLiteral("heartRate"));
+    m_authStatus.clear();
+    emit authStatusChanged();
+    emit bandReadyChanged();
+    emit bandInfoChanged();
+    emit servicesChanged();
+    setBusy(false);
     m_connectedAddress.clear();
     emit connectedAddressChanged();
     setStatus(QStringLiteral("Отключено"));
