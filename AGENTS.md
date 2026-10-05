@@ -95,13 +95,28 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   «Система» → __system, «Пропущенные оповещения календаря» → ru.omp.calendar).
   Поиск иконки (iconCandidatePaths): hicolor/*/apps/<id>.png → Icon= из
   desktop-файла в теме aurora-default (системные приложения OMP) →
-  __system=icon-m-setting, __unknown=icon-m-question, последний резерв —
-  всегда вопросительный знак. Своя иконка подставляется ТОЛЬКО для своего
-  пакета (никогда не fallback). На браслет package уходит с солью "#2" —
-  версия схемы иконок: браслет кэширует иконки по package, соль сбрасывает
-  устаревший кэш (при смене схемы иконок солируй дальше).
-  Ограничение: GUI-relay в песочнице не видит /usr/share/icons и темы —
-  новые иконки грузятся только когда браслетом владеет демон.
+  __system=icon-m-setting, __unknown=icon-m-question; для прочих пакетов
+  без иконки на ICON_QUERY НЕ отвечаем (как Gadgetbridge) — браслет
+  показывает свою иконку по умолчанию. Своя иконка подставляется ТОЛЬКО
+  для своего пакета (никогда не fallback).
+  ХРАНИЛИЩЕ ИКОНОК БРАСЛЕТА — КРИТИЧНО (выяснено опытным путём 05.10):
+  ~6 слотов, дедупа по md5 НЕТ (один и тот же md5 принимается повторно
+  и ест новый слот), errno=1 в DataUploadAck = «нет места»; таблица
+  чистится ТОЛЬКО ребутом браслета. Поэтому: никакой соли в package
+  (каждая соль = новый набор пакетов = вся таблица), никакой уникализации
+  контента (md5 ни на что не влияет), грузим ОДИН размер на пакет за
+  сессию (m_iconServed; 28px достаточно — браслет просит его первым,
+  44/80 пропускаем: показано, что показ иконки работает и без них,
+  браслет просто иногда переспрашивает 80px — безвредно). Если иконка
+  не найдена — молчим, чтобы не жечь слоты на мусорные пакеты.
+  Браслет переспрашивает иконку на каждое уведомление, пока привязка
+  package→иконка не создана; после успешной загрузки перестаёт спрашивать.
+  Браслетом всегда владеет демон (GUI ходит по D-Bus) — иконки грузятся
+  независимо от того, открыт ли GUI.
+  Кэш иконок (~/.config/ru.nighteugene.aurorafitness/icons/<pkg>.png)
+  пишется один раз (cacheIcon пропускает существующие) — испорченный
+  файл отравляет пакет до ручного удаления; при подозрениях чистить
+  вручную.
   Историческая грабля: ACK-и браслета на 0x0055
   (`00 00 01 01` и т.п.) отбрасывались фильтром onCharacteristicValue —
   m_uploadPath должен быть в списке разрешённых путей.
@@ -153,21 +168,36 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   дублирует каждый Notify как вызов к ru.auroraos.Notifications — фильтровать
   по destination == org.freedesktop.Notifications.
 - Арбитраж владения браслетом: имя `ru.nighteugene.aurorafitness.band` на
-  сессионной шине. Демон просит его с ALLOW_REPLACEMENT (в очереди, пока
-  жив GUI); GUI и CLI (--read/--auth/--sync/--notify) захватывают через
-  прямой RequestName с флагами 3 (Qt 5.6 `registerService` на этой сборке
-  молча возвращает false — НЕ использовать). Демон по NameLost отключается
-  и СНОВА встаёт в очередь (request_name без DO_NOT_QUEUE — иначе после
-  закрытия GUI имя остаётся ничьим и демон молчит до рестарта).
-  Пока браслетом владеет GUI, демон НЕ молчит, а передаёт каждое
-  уведомление вызовом `forwardNotification` на `ru.nighteugene.aurorafitness.gui`
-  (/notify, Q_CLASSINFO-интерфейс) — GUI поднимает это имя в relay-режиме
-  NotificationDaemon (без eavesdrop: сессионная шина песочницы идёт через
-  xdg-dbus-proxy, eavesdrop там недоступен). Подключение GUI/CLI — через
-  `BluezManager::connectToBandWhenFree`
+  сессионной шине. Его ВСЕГДА держит демон; GUI имя не трогает и BLE не
+  трогает — работает через D-Bus API демона (`BandService`, см. ниже).
+  Отбирают имя только CLI-режимы (--read/--auth/--sync/--notify) — прямым
+  RequestName с флагами 3 (Qt 5.6 `registerService` на этой сборке молча
+  возвращает false — НЕ использовать). Демон по потере имени отключается
+  и СНОВА встаёт в очередь (без DO_NOT_QUEUE), по возврату —
+  переподключается. Подключение CLI — через `BluezManager::connectToBandWhenFree`
   (Disconnect демона асинхронен, иначе его обрыв линка попадает в середину
-  чужого Connect). Песочница sailjail владение именем НЕ блокирует
-  (проверено: `sailjail -p ...desktop -- /usr/bin/...`).
+  чужого Connect). Песочница sailjail владение именем НЕ блокирует.
+  ГРАБЛЯ: имя запрашивается через Qt-соединение (`requestBandNameQt` в
+  notificationdaemon.cpp), а не через raw libdbus — D-Bus объект /band живёт
+  на Qt-соединении, вызовы по well-known имени идут владельцу имени.
+  Соответственно за именем следим по широковещательному NameOwnerChanged
+  (NameAcquired/NameLost — юникаст в Qt-соединение, на raw-соединении
+  eavesdrop-а их не видно).
+- D-Bus API демона (`app/src/bandservice.*`): сервис/интерфейс
+  `ru.nighteugene.aurorafitness.band`, путь `/band`. Метод `getState()` →
+  a{sv} со всем состоянием (scanning/status/ready/bandInfo/devices/...),
+  сигнал `stateChanged(a{sv})` (со схлопыванием 200 мс; массивы samples/stages
+  в activityResults заменены списком нулей той же длины — QVariant() шина
+  не маршалит), сигналы `activitySyncStarted/Finished`, `deviceError`,
+  методы startScan/stopScan/connectToBand/disconnectBand/syncActivity/
+  startBandAuth/setAuthKey/sendTestNotification. Каждый вызов логируется
+  (песоченый GUI в журнал не пишет) и дёргает reloadSettings демона.
+- GUI: `app/src/bandproxy.*` — context property `bluez` с теми же
+  именами property/методов/сигналов, что BluezManager. Локально (без шины):
+  цели, профиль, вид карточек, свитчи демона (appSettings). По шине — всё
+  BLE-состояние и действия. Следит за именем (QDBusServiceWatcher): демона
+  нет → status «Служба браслета не запущена» + попытка systemctl --user start
+  (копирование юнита из песочницы запрещено — сообщение с ручной командой).
 - BlueZ на устройстве эхом отражает наши WriteValue как
   PropertiesChanged(Value) даже на write-char 0x0052, А шина/QtDBus
   доставляет каждый сигнал Value в слот дважды (dbus-monitor видит по
@@ -179,14 +209,18 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 
 ## Архитектура
 
-- `app/src/bluezmanager.*` — BlueZ D-Bus, Q_PROPERTY для QML (userStatus с
-  фильтром служебных статусов, connectedDeviceName, цели из QSettings),
-  autoConnectLast() при старте GUI.
+- `app/src/bluezmanager.*` — BlueZ D-Bus; живёт в демоне и CLI-режимах
+  (GUI его больше не создаёт). userStatus с фильтром служебных статусов,
+  connectedDeviceName, цели из QSettings.
+- `app/src/bandservice.*` — D-Bus API демона для GUI (см. раздел
+  «Платформа Аврора»), `app/src/bandproxy.*` — его клиент в GUI
+  (context property `bluez`).
 - `app/src/xiaomi/`: proto.h (мини-proto2), crypto.cpp (OpenSSL CCM/HMAC),
   xiaomichannel.* (транспорт+auth+уведомления+иконки), activityfetcher.*,
   activityparser.*, dataupload.*.
 - `app/src/storage.*` — SQLite (4 таблицы).
-- `app/src/notificationdaemon.*` — демон уведомлений.
+- `app/src/notificationdaemon.*` — демон: перехват уведомлений (eavesdrop),
+  автосинк, арбитраж имени браслета.
 - QML: `MainPage` (статистика: кольцо шагов, карточки 2×3, график 7 дней,
   AppBar из `Aurora.Controls 1.0`, pull-to-refresh через
   `boundsBehavior: DragAndOvershootBounds` + `contentHeight: max(column.height, height+1)`),

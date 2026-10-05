@@ -105,3 +105,19 @@ BleDevice DevicesModel::deviceByAddress(const QString &address) const
     }
     return BleDevice();
 }
+
+QVariantList DevicesModel::toList() const
+{
+    QVariantList out;
+    for (const BleDevice &d : m_devices) {
+        QVariantMap m;
+        m.insert(QStringLiteral("name"),
+                 d.name.isEmpty() ? QStringLiteral("(без имени)") : d.name);
+        m.insert(QStringLiteral("address"), d.address);
+        m.insert(QStringLiteral("rssi"), int(d.rssi));
+        m.insert(QStringLiteral("connected"), d.connected);
+        m.insert(QStringLiteral("servicesResolved"), d.servicesResolved);
+        out.append(m);
+    }
+    return out;
+}

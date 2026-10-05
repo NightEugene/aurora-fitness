@@ -69,8 +69,15 @@ void XiaomiChannel::setup(const QString &readCharPath, const QString &writeCharP
 
     if (!m_uploadPath.isEmpty() && !m_uploader) {
         m_uploader = new DataUpload(this);
-        connect(m_uploader, &DataUpload::uploadFinished, this, [](bool success) {
+        connect(m_uploader, &DataUpload::uploadFinished, this, [this](bool success) {
             qInfo() << "XiaomiChannel: загрузка данных на браслет:" << (success ? "OK" : "ОШИБКА");
+            // Пакет помечаем обслуженным только при успехе — при errno=1
+            // (нет слотов) дадим повторить попытку на следующее уведомление
+            if (!m_iconUploading.isEmpty()) {
+                if (success)
+                    m_iconServed.insert(m_iconUploading);
+                m_iconUploading.clear();
+            }
         });
     }
 }
@@ -167,6 +174,10 @@ void XiaomiChannel::startAuth()
 
     m_state = State::Idle;
     m_authed = false;
+    // Новая BT-сессия: браслет мог перезагрузиться (таблица иконок
+    // очищается ребутом) — разрешаем повторную загрузку иконок
+    m_iconServed.clear();
+    m_iconUploading.clear();
     emit authStatusChanged(QStringLiteral("Аутентификация…"));
     sendAppNonce();
 }
@@ -521,10 +532,9 @@ void XiaomiChannel::sendNotification(const QString &appName, const QString &titl
     // package — идентификатор приложения-источника: по нему браслет
     // запрашивает иконку (ICON_QUERY) и группирует уведомления.
     // Свой id НЕ подставляем — иконка нашего приложения только для своих
-    // уведомлений. Суффикс "#3" — версия схемы иконок: браслет кэширует
-    // иконки по package, соль сбрасывает устаревший кэш.
-    n3.str(1, (package.isEmpty() ? QStringLiteral("__unknown") : package)
-              + QStringLiteral("#3"));
+    // уведомлений. Имя должно быть стабильным: браслет хранит иконки
+    // по package, а хранилище крошечное (~6 слотов, чистится ребутом).
+    n3.str(1, package.isEmpty() ? QStringLiteral("__unknown") : package);
     n3.str(2, appName.isEmpty() ? QStringLiteral("Aurora Fitness") : appName);
     n3.str(3, title);
     n3.str(4, QString());       // unknown4
@@ -565,8 +575,16 @@ void XiaomiChannel::handleNotificationIconQuery(const QByteArray &iconPackagePro
 {
     // NotificationIconPackage{package=1}
     QString pkg = QString::fromUtf8(pb::first(pb::parse(iconPackageProto), 1).bytes);
-    m_iconPackage = pkg.section(QLatin1Char('#'), 0, 0); // срезать соль схемы
+    m_iconPackage = pkg.section(QLatin1Char('#'), 0, 0); // срезать соль старых схем
     qInfo() << "XiaomiChannel: браслет запросил иконку для" << pkg;
+
+    // Хранилище иконок браслета ~6 слотов: отвечаем только если иконка
+    // реально есть. Иначе молчим (как Gadgetbridge) — браслет покажет
+    // свою иконку по умолчанию, а слот не расходуется.
+    if (findIconPath(m_iconPackage).isEmpty()) {
+        qInfo() << "XiaomiChannel: иконки для" << m_iconPackage << "нет — молчим";
+        return;
+    }
 
     // ICON_REPLY: subtype=15, Notification.notificationIconReply=14 (эхо package)
     pb::Writer iconPkg;
@@ -592,6 +610,24 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
     if (status != 0)
         return;
 
+    // Хранилище иконок браслета ~6 слотов (чистится ребутом), дедупа по md5
+    // нет — каждая загрузка ест слот, даже повторная. Поэтому грузим ОДИН
+    // размер на пакет (браслет просит 28/44/80 — первый запрошенный),
+    // 80px (25 КБ) не грузим никогда. Пропускать всё нельзя: без иконки
+    // браслет переспрашивает её на каждое уведомление.
+    if (size > 44) {
+        qInfo() << "XiaomiChannel: пропускаю размер иконки" << size << "(слишком большой)";
+        return;
+    }
+    if (!m_iconUploading.isEmpty()) {
+        qInfo() << "XiaomiChannel: иконка" << m_iconUploading << "ещё грузится — пропуск";
+        return;
+    }
+    if (m_iconServed.contains(m_iconPackage)) {
+        qInfo() << "XiaomiChannel: иконка" << m_iconPackage << "уже загружена — пропуск";
+        return;
+    }
+
     if (!m_uploader) {
         qWarning() << "XiaomiChannel: характеристика 0x0055 не найдена, иконку не отправить";
         return;
@@ -601,6 +637,7 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
     if (bitmap.isEmpty())
         return;
 
+    m_iconUploading = m_iconPackage; // переносится в m_iconServed по uploadFinished
     m_uploader->startUpload(DataUpload::TYPE_NOTIFICATION_ICON, bitmap);
 }
 
@@ -622,6 +659,10 @@ QStringList XiaomiChannel::iconCandidatePaths(const QString &pkg)
                        .arg(QLatin1String(sz), pkg);
         QFile desktop(QStringLiteral("/usr/share/applications/") + pkg
                       + QStringLiteral(".desktop"));
+        // У ru.omp.voicecall desktop-файла нет — иконка в voicecallui
+        if (!desktop.exists())
+            desktop.setFileName(QStringLiteral("/usr/share/applications/") + pkg
+                                + QStringLiteral("ui.desktop"));
         if (desktop.open(QIODevice::ReadOnly | QIODevice::Text)) {
             QTextStream in(&desktop);
             in.setCodec("UTF-8");
@@ -641,13 +682,22 @@ QStringList XiaomiChannel::iconCandidatePaths(const QString &pkg)
             out << QStringLiteral("/usr/share/themes/aurora-default/meegotouch/%1/icons/%2.png")
                        .arg(QLatin1String(z), themeIcon);
     }
-    // Финальный резерв — знак вопроса
-    if (pkg != QLatin1String("__unknown")) {
-        for (const char *z : {"z2.0", "z1.75", "z1.5", "z1.25", "z1.0", "z0.75"})
-            out << QStringLiteral("/usr/share/themes/aurora-default/meegotouch/%1/icons/icon-m-question.png")
-                       .arg(QLatin1String(z));
-    }
     return out;
+}
+
+QString XiaomiChannel::findIconPath(const QString &pkg) const
+{
+    // Сначала кэш в общем конфиг-каталоге (его демон наполняет вне песочницы,
+    // GUI-relay читает только оттуда), затем системные пути
+    const QString cached = appConfigDir() + QStringLiteral("/icons/") + pkg
+                           + QStringLiteral(".png");
+    if (QFile::exists(cached))
+        return cached;
+    for (const QString &path : iconCandidatePaths(pkg)) {
+        if (QFile::exists(path))
+            return path;
+    }
+    return QString();
 }
 
 QByteArray XiaomiChannel::buildIconBitmap(quint32 pixelFormat, quint32 size) const
@@ -657,23 +707,16 @@ QByteArray XiaomiChannel::buildIconBitmap(quint32 pixelFormat, quint32 size) con
         return QByteArray();
     }
 
-    // Сначала кэш в общем конфиг-каталоге (его демон наполняет вне песочницы,
-    // GUI-relay читает только оттуда), затем системные пути
-    QStringList candidates;
-    candidates << appConfigDir() + QStringLiteral("/icons/") + m_iconPackage
-                      + QStringLiteral(".png");
-    candidates << iconCandidatePaths(m_iconPackage);
+    const QString iconPath = findIconPath(m_iconPackage);
     QImage img;
-    for (const QString &path : candidates) {
-        if (img.load(path))
-            break;
-    }
+    if (!iconPath.isEmpty())
+        img.load(iconPath);
     if (img.isNull()) {
         qWarning() << "XiaomiChannel: не удалось загрузить иконку для" << m_iconPackage;
         return QByteArray();
     }
 
-    const QImage scaled = img.convertToFormat(QImage::Format_ARGB32)
+    QImage scaled = img.convertToFormat(QImage::Format_ARGB32)
             .scaled(int(size), int(size), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
     QByteArray out;

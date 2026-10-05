@@ -18,6 +18,8 @@ SOURCES += \
     src/devicesmodel.cpp \
     src/storage.cpp \
     src/notificationdaemon.cpp \
+    src/bandservice.cpp \
+    src/bandproxy.cpp \
     src/main.cpp \
     src/xiaomi/crypto.cpp \
     src/xiaomi/xiaomichannel.cpp \
@@ -34,6 +36,8 @@ HEADERS += \
     src/devicesmodel.h \
     src/storage.h \
     src/notificationdaemon.h \
+    src/bandservice.h \
+    src/bandproxy.h \
     src/xiaomi/crypto.h \
     src/xiaomi/proto.h \
     src/xiaomi/xiaomichannel.h \

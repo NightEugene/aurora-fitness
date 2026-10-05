@@ -12,6 +12,9 @@
 
 #include "bluezmanager.h"
 #include "notificationdaemon.h"
+#include "bandservice.h"
+#include "bandproxy.h"
+#include "storage.h"
 #include "mprisbridge.h"
 #include "appsettings.h"
 
@@ -59,8 +62,8 @@ int main(int argc, char *argv[])
         app->setApplicationName(QStringLiteral("aurorafitness"));
 
         BluezManager manager;
-        // CLI-режимы, работающие с браслетом, отбирают имя у демона
-        // (как и GUI) — демон отпустит BLE-линк по NameLost. Подключение —
+        // CLI-режимы, работающие с браслетом, отбирают имя у демона —
+        // демон отпустит BLE-линк по NameLost. Подключение —
         // через connectToBandWhenFree: Disconnect демона асинхронен, его
         // обрыв линка не должен попасть в середину нашего Connect.
         if (cliArgs.contains(QStringLiteral("--read")) || cliArgs.contains(QStringLiteral("--auth"))
@@ -89,6 +92,20 @@ int main(int argc, char *argv[])
                 qWarning() << "MPRIS relay unavailable";
             if (!daemon.start())
                 return 1;
+            // D-Bus API для GUI: снапшот состояния + команды к браслету
+            BandService bandApi(&manager);
+            if (!bandApi.start())
+                qWarning() << "BandService: регистрация D-Bus объекта не удалась";
+            // Каждый входящий D-Bus вызов — повод перечитать настройки
+            QObject::connect(&bandApi, &BandService::invoked,
+                             &daemon, &NotificationDaemon::reloadSettings);
+            // Новый ключ авторизации (ввели в GUI) — переподключиться к браслету
+            QObject::connect(&bandApi, &BandService::authKeyChanged, &daemon,
+                             [&manager, &daemon]() {
+                manager.disconnectBand();
+                QTimer::singleShot(1500, &daemon,
+                                   [&daemon]() { daemon.ensureBandConnected(); });
+            });
             return app->exec();
         }
         if (cliArgs.contains(QStringLiteral("--notify"))) {
@@ -219,25 +236,15 @@ int main(int argc, char *argv[])
     application->setOrganizationName(QStringLiteral("ru.nighteugene"));
     application->setApplicationName(QStringLiteral("aurorafitness"));
 
-    BluezManager manager;
+    // GUI не трогает BLE и не захватывает имя браслета: браслетом всегда
+    // владеет демон, GUI ходит к нему по D-Bus через BandProxy (для QML —
+    // тот же интерфейс, что у BluezManager). Storage — локальный (sqlite).
+    Storage storage;
+    BandProxy proxy(&storage);
     QScopedPointer<QQuickView> view(Aurora::Application::createView());
-    view->rootContext()->setContextProperty(QStringLiteral("bluez"), &manager);
-    view->rootContext()->setContextProperty(QStringLiteral("storage"), manager.storage());
+    view->rootContext()->setContextProperty(QStringLiteral("bluez"), &proxy);
+    view->rootContext()->setContextProperty(QStringLiteral("storage"), &storage);
 
-    // GUI отбирает у демона имя браслета (RequestName ReplaceExisting) —
-    // демон по NameLost отпустит BLE-линк; autoConnectLast подождёт
-    // освобождения линка (connectToBandWhenFree).
-    const bool bandNameOwned = requestBandName();
-    qInfo() << "D-Bus имя браслета:" << (bandNameOwned ? "захвачено" : "НЕ захвачено");
-    QTimer::singleShot(500, &manager, &BluezManager::autoConnectLast);
-
-    // Пока GUI владеет браслетом, демон не шлёт уведомления сам, а передаёт
-    // их сюда вызовом forwardNotification (eavesdrop из песочницы GUI
-    // недоступен — на сессионной шине сидит xdg-dbus-proxy)
-    NotificationDaemon relay(&manager,
-            appSettings().value(QStringLiteral("device/lastAddress"), appSettings().value(QStringLiteral("miband8/lastAddress"))).toString());
-    relay.setRelayMode(true);
-    relay.start();
     // --qml pages/Foo.qml — отладочный запуск с другой стартовой страницей
     QString initialQml = QStringLiteral("qml/AuroraFitness.qml");
     const int qmlIdx = cliArgs.indexOf(QStringLiteral("--qml"));

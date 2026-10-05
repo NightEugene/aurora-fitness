@@ -6,6 +6,7 @@
 #include "../wearablechannel.h"
 #include <QByteArray>
 #include <QMap>
+#include <QSet>
 
 // Канал протокола Xiaomi (Mi Band 8): транспорт поверх GATT + auth-handshake.
 // Реализация портирована из Gadgetbridge (XiaomiBleProtocolV1 / XiaomiAuthService).
@@ -85,7 +86,8 @@ private:
 
 public:
     // Пути-кандидаты иконки пакета (hicolor → тема по Icon= → маркеры
-    // __system/__unknown → вопрос). Используется и демоном для кэша.
+    // __system/__unknown). Пустой список/отсутствие файлов = иконки нет.
+    // Используется и демоном для кэша.
     static QStringList iconCandidatePaths(const QString &pkg);
 
 private:
@@ -94,6 +96,8 @@ private:
     void handleNotification(quint32 subtype, const QByteArray &notificationProto);
     void handleNotificationIconQuery(const QByteArray &iconPackageProto);
     void handleNotificationIconRequest(const QByteArray &iconRequestProto);
+    // Первый существующий файл иконки пакета (кэш → iconCandidatePaths)
+    QString findIconPath(const QString &pkg) const;
     QByteArray buildIconBitmap(quint32 pixelFormat, quint32 size) const;
 
     static QByteArray makeNonce(const QByteArray &nonce4, quint32 counter);
@@ -105,6 +109,10 @@ private:
     class ActivityFetcher *m_fetcher = nullptr;
     class DataUpload *m_uploader = nullptr;
     QString m_iconPackage;
+    // Учёт слотов иконок браслета (~6, дедупа нет): грузим один размер на
+    // пакет; served — успешно загруженные, uploading — идущая сейчас загрузка
+    QSet<QString> m_iconServed;
+    QString m_iconUploading;
     QByteArray m_authKey;
     State m_state = State::Idle;
     bool m_authed = false;

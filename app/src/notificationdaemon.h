@@ -15,29 +15,28 @@ typedef struct DBusMessage DBusMessage;
 class BluezManager;
 class QSocketNotifier;
 
-// Фоновый демон: пересылка системных уведомлений на браслет + автосинк по таймеру.
+// Фоновый демон: единственный владелец браслета. Пересылка системных
+// уведомлений на браслет + автосинк по таймеру.
 // Перехват org.freedesktop.Notifications.Notify — через libdbus-1 (eavesdrop),
 // т.к. Qt 5.6 eavesdrop на сессионной шине не поддерживает.
 //
-// Relay-режим (setRelayMode): живёт внутри GUI — eavesdrop из песочницы
-// недоступен (xdg-dbus-proxy), поэтому демон передаёт уведомления вызовом
-// forwardNotification, а GUI шлёт их на браслет, которым в этот момент владеет.
+// GUI с браслетом напрямую не работает — ходит по D-Bus в BandService.
+// Имя браслета отбирают только CLI-режимы (--notify и т.п.): по NameLost
+// демон отпускает BLE-линк и встаёт в очередь за именем, по NameAcquired —
+// подключается обратно.
 class NotificationDaemon : public QObject
 {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "ru.nighteugene.aurorafitness.gui")
 public:
     explicit NotificationDaemon(BluezManager *bluez, const QString &mac,
                                 QObject *parent = nullptr);
     ~NotificationDaemon();
 
-    void setRelayMode(bool on) { m_relayMode = on; }
     bool start();
 
 public slots:
-    // Вызывается демоном по D-Bus, когда браслетом владеет GUI
-    void forwardNotification(const QString &appName, const QString &title,
-                             const QString &body, const QString &package);
+    void reloadSettings();      // перечитать conf (зовётся и по D-Bus вызовам BandService)
+    void ensureBandConnected(); // зовётся и при смене auth key из GUI
 
 private slots:
     void onDbusReadyRead();
@@ -54,12 +53,13 @@ private:
     // id приложения-источника: hint x-aurora-application-id или
     // поиск по имени в /usr/share/applications/*.desktop
     QString resolveAppPackage(const QString &appName, const QString &hintId) const;
-    // Кэширует иконку пакета в общий конфиг-каталог (читается GUI из песочницы)
+    // Кэширует иконку пакета в общий конфиг-каталог
     void cacheIcon(const QString &package) const;
     void flushPendingNotification();
-    void ensureBandConnected();
     void requestSync();
-    void reloadSettings();
+    // Имя браслета — через Qt-соединение (там живёт D-Bus объект /band);
+    // возвращает DBUS_REQUEST_NAME_REPLY_* или -1 при ошибке
+    int requestBandNameQt();
     QMap<QString, QString> readConfFile() const;
 
     BluezManager *m_bluez;
@@ -74,14 +74,13 @@ private:
     QDateTime m_lastSync;
 
     bool m_connecting = false;
-    bool m_bandAllowed = false; // владеем ли D-Bus-именем браслета (GUI отбирает)
+    bool m_bandAllowed = false; // владеем ли D-Bus-именем браслета (CLI отбирает)
     bool m_pendingNotification = false;
     QString m_pendingApp;
     QString m_pendingTitle;
     QString m_pendingBody;
     QString m_pendingPackage;
     bool m_syncPending = false;
-    bool m_relayMode = false;
 };
 
 #endif // NOTIFICATIONDAEMON_H

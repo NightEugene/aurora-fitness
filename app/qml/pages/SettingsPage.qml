@@ -173,7 +173,7 @@ Page {
             Rectangle {
                 anchors.fill: parent
                 color: Theme.rgba(Theme.highlightBackgroundColor,
-                                  page.isBand(name) ? 0.15 : 0.0)
+                                  page.isBand(modelData.name) ? 0.15 : 0.0)
             }
 
             Column {
@@ -182,13 +182,14 @@ Page {
                 width: parent.width - 2 * x
 
                 Label {
-                    text: name + (page.isBand(name) ? "  ⌚" : "")
+                    text: modelData.name + (page.isBand(modelData.name) ? "  ⌚" : "")
                     color: delegate.highlighted ? Theme.highlightColor : Theme.primaryColor
                     truncationMode: TruncationMode.Fade
                     width: parent.width
                 }
                 Label {
-                    text: address + "   RSSI " + rssi + (connected ? "   ●" : "")
+                    text: modelData.address + "   RSSI " + modelData.rssi
+                          + (modelData.connected ? "   ●" : "")
                     color: Theme.secondaryColor
                     font.pixelSize: Theme.fontSizeExtraSmall
                 }
@@ -196,9 +197,9 @@ Page {
 
             onClicked: {
                 bluez.stopScan()
-                bluez.connectToBand(address)
+                bluez.connectToBand(modelData.address)
                 pageStack.push(Qt.resolvedUrl("DevicePage.qml"),
-                               { "address": address, "deviceName": name })
+                               { "address": modelData.address, "deviceName": modelData.name })
             }
         }
 

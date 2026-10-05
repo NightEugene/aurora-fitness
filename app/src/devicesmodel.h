@@ -38,6 +38,8 @@ public:
     void remove(const QString &path);
     void clearAll();
     BleDevice deviceByAddress(const QString &address) const;
+    // Снапшот для D-Bus (BandService): список карт с ролями модели
+    QVariantList toList() const;
 
 private:
     int indexOfPath(const QString &path) const;
