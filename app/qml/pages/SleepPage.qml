@@ -50,6 +50,12 @@ Page {
         phaseBar.requestPaint()
     }
 
+    // Ночь датируется днём ПРОБУЖДЕНИЯ (как в Mi Fitness): тогда ночь
+    // «лёг в 02:20» и «лёг в 23:27» не слипаются в одну дату отбоя.
+    function nightTs(s) {
+        return (s.wakeTime > 0) ? s.wakeTime : s.bedTime
+    }
+
     function fmtHM(min) {
         return Math.floor(min / 60) + qsTr("ч") + " " + ("0" + (min % 60)).slice(-2) + qsTr("м")
     }
@@ -193,7 +199,7 @@ Page {
                         }
                         Label {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: page.current ? page.fmtDate(page.current.bedTime) : ""
+                            text: page.current ? page.fmtDate(page.nightTs(page.current)) : ""
                             color: Theme.primaryColor
                             font.pixelSize: Theme.fontSizeMedium
                             font.bold: true
@@ -207,26 +213,26 @@ Page {
                                         return
                                     var marked = []
                                     for (var i = 0; i < page.sessions.length; i++) {
-                                        var d = new Date(page.sessions[i].bedTime * 1000)
+                                        var d = new Date(page.nightTs(page.sessions[i]) * 1000)
                                         marked.push(d.getFullYear() + "-"
                                                     + ("0" + (d.getMonth() + 1)).slice(-2) + "-"
                                                     + ("0" + d.getDate()).slice(-2))
                                     }
                                     var dlg = pageStack.push(
                                                 Qt.resolvedUrl("SleepDateDialog.qml"), {
-                                                    date: new Date(page.current.bedTime * 1000),
+                                                    date: new Date(page.nightTs(page.current) * 1000),
                                                     markedDates: marked
                                                 })
                                     dlg.accepted.connect(function () {
                                         var want = ("0" + dlg.selectedDate.getDate()).slice(-2) + "."
                                                 + ("0" + (dlg.selectedDate.getMonth() + 1)).slice(-2)
-                                        // точное совпадение по дате отбоя, иначе ближайшая
+                                        // точное совпадение по дате пробуждения, иначе ближайшая
                                         var best = -1
                                         var bestDiff = -1
                                         for (var i = 0; i < page.sessions.length; i++) {
-                                            var diff = Math.abs(page.sessions[i].bedTime
+                                            var diff = Math.abs(page.nightTs(page.sessions[i])
                                                                 - dlg.selectedDate.getTime() / 1000)
-                                            if (page.fmtDate(page.sessions[i].bedTime) === want) {
+                                            if (page.fmtDate(page.nightTs(page.sessions[i])) === want) {
                                                 best = i
                                                 break
                                             }
@@ -539,7 +545,7 @@ Page {
 
                                 Label {
                                     width: parent.width - durLbl.width
-                                    text: page.fmtDate(modelData.bedTime)
+                                    text: page.fmtDate(page.nightTs(modelData))
                                           + "  ·  " + page.fmtTime(modelData.bedTime)
                                           + "–" + (modelData.wakeTime > 0
                                                    ? page.fmtTime(modelData.wakeTime) : "—")

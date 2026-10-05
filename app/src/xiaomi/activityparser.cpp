@@ -450,17 +450,23 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
             summary.insert(QStringLiteral("deepMin"),  qlonglong(r.u16be()));
             haveSummary = true;
         } else if (type == 17) { // stages, записи u16be
+            // Файл — накопительный снапшот: каждый следующий пакет фаз полнее
+            // предыдущего, причём браслет пересматривает раннюю сегментацию.
+            // Берём только ПОСЛЕДНИЙ непустой пакет, иначе шкала задваивается.
+            QVariantList packetStages;
             qlonglong current = ts;
             for (int i = 0; i < dataLen / 2; ++i) {
                 const quint16 val = r.u16be();
                 const int stage = val >> 12;
-                const int offsetMinutes = val & 0xFFF; // длительность ПРЕДЫДУЩЕЙ фазы
+                const int offsetMinutes = val & 0xFFF; // длительность ЭТОЙ фазы
                 QVariantMap s;
                 s.insert(QStringLiteral("ts"), current);
                 s.insert(QStringLiteral("stage"), sleepStageName(stage));
-                stages.append(s);
+                packetStages.append(s);
                 current += qlonglong(offsetMinutes) * 60;
             }
+            if (!packetStages.isEmpty())
+                stages = packetStages;
         }
         r.pos = dataEnd;
     }
