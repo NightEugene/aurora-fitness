@@ -488,17 +488,27 @@ void Storage::saveManualSamples(const QVariantMap &m)
 
 QVariantMap Storage::todaySummary()
 {
+    return summaryForDay(QDate::currentDate());
+}
+
+QVariantMap Storage::daySummary(qlonglong ts)
+{
+    return summaryForDay(QDateTime::fromTime_t(uint(ts)).date());
+}
+
+QVariantMap Storage::summaryForDay(const QDate &date)
+{
     QVariantMap out;
-    if (!m_ready)
+    if (!m_ready || date.isValid() == false)
         return out;
 
-    const QDateTime startOfDay(QDate::currentDate());
+    const QDateTime startOfDay(date);
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("SELECT ts, steps, calories, resting_hr, max_hr, min_hr,"
                              "avg_hr, stress_avg, spo2_avg, activity_min FROM daily_summary"
                              " WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT 1"));
     q.addBindValue(startOfDay.toTime_t());
-    q.addBindValue(QDateTime(QDate::currentDate().addDays(1)).toTime_t());
+    q.addBindValue(QDateTime(date.addDays(1)).toTime_t());
     if (!q.exec() || !q.next())
         return out;
 
@@ -528,7 +538,7 @@ QVariantList Storage::dailySummaries(int days)
         return out;
 
     QSqlQuery q(m_db);
-    q.prepare(QStringLiteral("SELECT ts, steps, calories, avg_hr FROM daily_summary"
+    q.prepare(QStringLiteral("SELECT ts, steps, calories, avg_hr, activity_min FROM daily_summary"
                              " ORDER BY ts DESC LIMIT ?"));
     q.addBindValue(days);
     if (!q.exec())
@@ -539,6 +549,7 @@ QVariantList Storage::dailySummaries(int days)
         row.insert(QStringLiteral("steps"), q.value(1).toLongLong());
         row.insert(QStringLiteral("calories"), q.value(2).toLongLong());
         row.insert(QStringLiteral("avgHr"), q.value(3).toLongLong());
+        row.insert(QStringLiteral("activityMin"), q.value(4).toLongLong());
         out.prepend(row); // в ASC для графика
     }
     return out;

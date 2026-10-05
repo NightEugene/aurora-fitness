@@ -26,6 +26,7 @@ public:
     Q_INVOKABLE QVariantList hourlyActivity();
 
     Q_INVOKABLE QVariantMap todaySummary();
+    Q_INVOKABLE QVariantMap daySummary(qlonglong ts);
     Q_INVOKABLE QVariantList dailySummaries(int days);
     Q_INVOKABLE QVariantList sleepSessions(int limit);
     Q_INVOKABLE QVariantList sleepStages(qlonglong bedTime);
@@ -36,6 +37,7 @@ signals:
     void dataChanged();
 
 private:
+    QVariantMap summaryForDay(const QDate &date);
     bool open();
     void saveDailySummary(const QVariantMap &m);
     void saveDailyDetails(const QVariantMap &m);

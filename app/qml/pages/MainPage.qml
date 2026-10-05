@@ -95,6 +95,29 @@ Page {
         ctx.restore()
     }
 
+    // Шевроны ">" прямо на кольце: позиция — конец текущего «круга» (overFrac),
+    // направление — по ходу заполнения (по часовой), число = полные круги (laps)
+    function drawLapChevrons(ctx, cx, cy, r, laps, overFrac, lw) {
+        var a = -Math.PI / 2 + overFrac * Math.PI * 2
+        var px = cx + r * Math.cos(a)
+        var py = cy + r * Math.sin(a)
+        var tx = -Math.sin(a), ty = Math.cos(a)  // тангент, по ходу движения
+        var nx = Math.cos(a), ny = Math.sin(a)   // радиально наружу
+        var s = lw * 0.55                        // полуразмер шеврона
+        ctx.strokeStyle = "black"
+        ctx.lineWidth = lw * 0.32
+        ctx.lineCap = "round"
+        for (var k = 0; k < laps; k++) {
+            var bx = px - tx * k * s * 1.5
+            var by = py - ty * k * s * 1.5
+            ctx.beginPath()
+            ctx.moveTo(bx - tx * s + nx * s, by - ty * s + ny * s)
+            ctx.lineTo(bx + tx * s, by + ty * s)
+            ctx.lineTo(bx - tx * s - nx * s, by - ty * s - ny * s)
+            ctx.stroke()
+        }
+    }
+
     function reload() {
         today = storage.todaySummary()
         week = storage.dailySummaries(7)
@@ -284,6 +307,13 @@ Page {
                 radius: Theme.dp(20)
                 color: page.cardColor
 
+                // Тап по карточке шагов — дневная статистика
+                MouseArea {
+                    z: 1
+                    anchors.fill: parent
+                    onClicked: pageStack.push(Qt.resolvedUrl("StatsPage.qml"))
+                }
+
                 Column {
                     id: heroContent
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -313,19 +343,18 @@ Page {
                                 // Радиус внешнего кольца с запасом под диск иконки
                                 var rOuter = (width - lw) / 2 - lw * 1.1
 
-                                // Три кольца: шаги, калории, активность
+                                // Три кольца: шаги, калории, активность.
+                                // Цвет базовый всегда; при переполнении кольцо
+                                // полное + шевроны ">" на позиции текущего круга.
                                 var rings = [
-                                    { frac: (page.today.steps || 0) / bluez.stepsGoal,
-                                      color: (page.today.steps || 0) >= bluez.stepsGoal
-                                             ? page.goalBright : Theme.highlightColor,
+                                    { ov: (page.today.steps || 0) / bluez.stepsGoal,
+                                      color: Theme.highlightColor,
                                       icon: "shoe" },
-                                    { frac: (page.today.calories || 0) / bluez.caloriesGoal,
-                                      color: (page.today.calories || 0) >= bluez.caloriesGoal
-                                             ? page.accentKcalBright : page.accentKcal,
+                                    { ov: (page.today.calories || 0) / bluez.caloriesGoal,
+                                      color: page.accentKcal,
                                       icon: "flame" },
-                                    { frac: (page.today.activityMin || 0) / bluez.activityGoal,
-                                      color: (page.today.activityMin || 0) >= bluez.activityGoal
-                                             ? page.accentActivityBright : page.accentActivity,
+                                    { ov: (page.today.activityMin || 0) / bluez.activityGoal,
+                                      color: page.accentActivity,
                                       icon: "clock" }
                                 ]
 
@@ -333,6 +362,8 @@ Page {
                                 for (var i = 0; i < rings.length; i++) {
                                     var r = rOuter - i * (lw + gap)
                                     var col = rings[i].color
+                                    var laps = Math.floor(rings[i].ov)
+                                    var frac = laps >= 1 ? 1.0 : Math.min(1.0, rings[i].ov)
 
                                     ctx.strokeStyle = Theme.rgba(col, 0.15)
                                     ctx.lineWidth = lw
@@ -340,7 +371,6 @@ Page {
                                     ctx.arc(cx, cy, r, 0, Math.PI * 2)
                                     ctx.stroke()
 
-                                    var frac = Math.min(1.0, rings[i].frac)
                                     if (frac > 0) {
                                         ctx.strokeStyle = col
                                         ctx.beginPath()
@@ -351,6 +381,10 @@ Page {
 
                                     page.drawRingIcon(ctx, rings[i].icon,
                                                       cx, cy - r, lw * 2.1, col)
+
+                                    if (laps >= 1)
+                                        page.drawLapChevrons(ctx, cx, cy, r, laps,
+                                                             rings[i].ov - laps, lw)
                                 }
                             }
                         }
