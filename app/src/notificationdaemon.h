@@ -54,6 +54,8 @@ private:
     // id приложения-источника: hint x-aurora-application-id или
     // поиск по имени в /usr/share/applications/*.desktop
     QString resolveAppPackage(const QString &appName, const QString &hintId) const;
+    // Кэширует иконку пакета в общий конфиг-каталог (читается GUI из песочницы)
+    void cacheIcon(const QString &package) const;
     void flushPendingNotification();
     void ensureBandConnected();
     void requestSync();

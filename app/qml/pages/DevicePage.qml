@@ -137,7 +137,9 @@ Page {
                 visible: bluez.ready
                 enabled: notifTitle.text.length > 0 || notifBody.text.length > 0
                 text: qsTr("Отправить уведомление")
-                onClicked: bluez.sendTestNotification(notifTitle.text, notifBody.text)
+                onClicked: bluez.sendTestNotification(notifTitle.text, notifBody.text,
+                                                      "Аврора Фитнес",
+                                                      "ru.nighteugene.aurorafitness")
             }
 
             SectionHeader {

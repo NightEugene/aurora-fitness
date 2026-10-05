@@ -5,6 +5,7 @@
 #include "dataupload.h"
 #include "proto.h"
 #include "crypto.h"
+#include "../appsettings.h"
 
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -12,7 +13,9 @@
 #include <QDBusPendingReply>
 #include <QDateTime>
 #include <QDebug>
+#include <QFile>
 #include <QImage>
+#include <QTextStream>
 #include <QTimeZone>
 #include <QTimer>
 
@@ -516,8 +519,12 @@ void XiaomiChannel::sendNotification(const QString &appName, const QString &titl
     // Notification3
     pb::Writer n3;
     // package — идентификатор приложения-источника: по нему браслет
-    // запрашивает иконку (ICON_QUERY) и группирует уведомления
-    n3.str(1, package.isEmpty() ? QStringLiteral("ru.nighteugene.aurorafitness") : package);
+    // запрашивает иконку (ICON_QUERY) и группирует уведомления.
+    // Свой id НЕ подставляем — иконка нашего приложения только для своих
+    // уведомлений. Суффикс "#3" — версия схемы иконок: браслет кэширует
+    // иконки по package, соль сбрасывает устаревший кэш.
+    n3.str(1, (package.isEmpty() ? QStringLiteral("__unknown") : package)
+              + QStringLiteral("#3"));
     n3.str(2, appName.isEmpty() ? QStringLiteral("Aurora Fitness") : appName);
     n3.str(3, title);
     n3.str(4, QString());       // unknown4
@@ -557,8 +564,8 @@ void XiaomiChannel::handleNotification(quint32 subtype, const QByteArray &notifi
 void XiaomiChannel::handleNotificationIconQuery(const QByteArray &iconPackageProto)
 {
     // NotificationIconPackage{package=1}
-    const QString pkg = QString::fromUtf8(pb::first(pb::parse(iconPackageProto), 1).bytes);
-    m_iconPackage = pkg;
+    QString pkg = QString::fromUtf8(pb::first(pb::parse(iconPackageProto), 1).bytes);
+    m_iconPackage = pkg.section(QLatin1Char('#'), 0, 0); // срезать соль схемы
     qInfo() << "XiaomiChannel: браслет запросил иконку для" << pkg;
 
     // ICON_REPLY: subtype=15, Notification.notificationIconReply=14 (эхо package)
@@ -597,6 +604,52 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
     m_uploader->startUpload(DataUpload::TYPE_NOTIFICATION_ICON, bitmap);
 }
 
+// Кандидаты путей иконки уведомления (по убыванию приоритета):
+// hicolor по desktop-id → Icon= из desktop-файла (системные приложения OMP
+// хранят иконки в теме) → маркеры __system (шестерёнка) / прочие (вопрос).
+// Своя иконка подставляется только для своего пакета — она лежит в hicolor.
+QStringList XiaomiChannel::iconCandidatePaths(const QString &pkg)
+{
+    QStringList out;
+    QString themeIcon;
+    if (pkg == QLatin1String("__system")) {
+        themeIcon = QStringLiteral("icon-m-setting");
+    } else if (pkg.isEmpty() || pkg == QLatin1String("__unknown")) {
+        themeIcon = QStringLiteral("icon-m-question");
+    } else {
+        for (const char *sz : {"128x128", "108x108", "86x86", "172x172"})
+            out << QStringLiteral("/usr/share/icons/hicolor/%1/apps/%2.png")
+                       .arg(QLatin1String(sz), pkg);
+        QFile desktop(QStringLiteral("/usr/share/applications/") + pkg
+                      + QStringLiteral(".desktop"));
+        if (desktop.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&desktop);
+            in.setCodec("UTF-8");
+            while (!in.atEnd()) {
+                const QString line = in.readLine();
+                if (line.startsWith(QLatin1String("Icon="))) {
+                    themeIcon = line.mid(5).trimmed();
+                    break;
+                }
+            }
+        }
+    }
+    if (themeIcon.startsWith(QLatin1Char('/'))) {
+        out << themeIcon;
+    } else if (!themeIcon.isEmpty()) {
+        for (const char *z : {"z2.0", "z1.75", "z1.5", "z1.25", "z1.0", "z0.75"})
+            out << QStringLiteral("/usr/share/themes/aurora-default/meegotouch/%1/icons/%2.png")
+                       .arg(QLatin1String(z), themeIcon);
+    }
+    // Финальный резерв — знак вопроса
+    if (pkg != QLatin1String("__unknown")) {
+        for (const char *z : {"z2.0", "z1.75", "z1.5", "z1.25", "z1.0", "z0.75"})
+            out << QStringLiteral("/usr/share/themes/aurora-default/meegotouch/%1/icons/icon-m-question.png")
+                       .arg(QLatin1String(z));
+    }
+    return out;
+}
+
 QByteArray XiaomiChannel::buildIconBitmap(quint32 pixelFormat, quint32 size) const
 {
     if (size == 0 || size > 512) {
@@ -604,19 +657,15 @@ QByteArray XiaomiChannel::buildIconBitmap(quint32 pixelFormat, quint32 size) con
         return QByteArray();
     }
 
-    // Иконка приложения-источника по его desktop-id; если не нашли — наша
+    // Сначала кэш в общем конфиг-каталоге (его демон наполняет вне песочницы,
+    // GUI-relay читает только оттуда), затем системные пути
+    QStringList candidates;
+    candidates << appConfigDir() + QStringLiteral("/icons/") + m_iconPackage
+                      + QStringLiteral(".png");
+    candidates << iconCandidatePaths(m_iconPackage);
     QImage img;
-    QStringList names;
-    if (!m_iconPackage.isEmpty())
-        names << m_iconPackage;
-    names << QStringLiteral("ru.nighteugene.aurorafitness");
-    for (const QString &pkg : names) {
-        const QString name = QStringLiteral("/") + pkg + QStringLiteral(".png");
-        for (const char *sz : {"128x128", "108x108", "86x86", "172x172"}) {
-            if (img.load(QStringLiteral("/usr/share/icons/hicolor/%1/apps").arg(QLatin1String(sz)) + name))
-                break;
-        }
-        if (!img.isNull())
+    for (const QString &path : candidates) {
+        if (img.load(path))
             break;
     }
     if (img.isNull()) {

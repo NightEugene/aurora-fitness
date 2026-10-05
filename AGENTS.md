@@ -91,11 +91,17 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   части по chunkSize-4, каждая — chunked-передача на 0x0055 с шифрованием
   counter=0). РАБОТАЕТ. Иконки разные для каждого приложения: package =
   id источника (hint x-aurora-application-id, иначе поиск локализованного
-  имени по /usr/share/applications/*.desktop — resolveAppPackage), иконка —
-  /usr/share/icons/hicolor/*/apps/<id>.png, fallback — наша. Браслет
-  запрашивает иконку в нескольких размерах (28/44/80) и кэширует по package.
-  Ограничение: GUI-relay в песочнице не видит /usr/share/icons — новые
-  иконки грузятся только когда браслетом владеет демон.
+  имени по /usr/share/applications/*.desktop — resolveAppPackage; алиасы:
+  «Система» → __system, «Пропущенные оповещения календаря» → ru.omp.calendar).
+  Поиск иконки (iconCandidatePaths): hicolor/*/apps/<id>.png → Icon= из
+  desktop-файла в теме aurora-default (системные приложения OMP) →
+  __system=icon-m-setting, __unknown=icon-m-question, последний резерв —
+  всегда вопросительный знак. Своя иконка подставляется ТОЛЬКО для своего
+  пакета (никогда не fallback). На браслет package уходит с солью "#2" —
+  версия схемы иконок: браслет кэширует иконки по package, соль сбрасывает
+  устаревший кэш (при смене схемы иконок солируй дальше).
+  Ограничение: GUI-relay в песочнице не видит /usr/share/icons и темы —
+  новые иконки грузятся только когда браслетом владеет демон.
   Историческая грабля: ACK-и браслета на 0x0055
   (`00 00 01 01` и т.п.) отбрасывались фильтром onCharacteristicValue —
   m_uploadPath должен быть в списке разрешённых путей.
@@ -194,6 +200,20 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 - Нет `QDate::startOfDay`, `Column.bottomPadding`, `ctx.reset()`.
 - SectionHeader по умолчанию выравнен ВПРАВО — нужен
   `horizontalAlignment: Text.AlignLeft`.
+
+## Документация Авроры (MCP)
+
+- MCP-сервер документации: https://developer.auroraos.ru/api/mcp (инструменты:
+  `search`, `search_code`, `get_document`, `get_code_source`, `get_doc_versions`,
+  `get_ext_tools_list`). WAF режет не-браузерный User-Agent — слать браузерный
+  заголовок. Если MCP-инструменты недоступны в сессии, ходить curl'ом:
+  POST JSON-RPC (initialize → notifications/initialized → tools/call), Accept:
+  `application/json, text/event-stream`, сохранять `Mcp-Session-Id` из заголовков.
+  `get_document` работает не для всех разделов («Раздел undefined не
+  поддерживает get_document») — тогда читать страницу напрямую по URL из search.
+- Например, так найден нативный `PullToRefresh` (attached-свойства Aurora.Controls
+  1.0: refreshHandler, refreshCompleted[Custom]) — он же есть на устройстве в
+  `/usr/lib/qt5/qml/Aurora/Controls/private/`.
 
 ## Логи
 

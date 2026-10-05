@@ -83,6 +83,13 @@ private:
     void requestDeviceInfo();
     void handleSystem(const QByteArray &systemMsg);
 
+public:
+    // Пути-кандидаты иконки пакета (hicolor → тема по Icon= → маркеры
+    // __system/__unknown → вопрос). Используется и демоном для кэша.
+    static QStringList iconCandidatePaths(const QString &pkg);
+
+private:
+
     // --- уведомления / иконки ---
     void handleNotification(quint32 subtype, const QByteArray &notificationProto);
     void handleNotificationIconQuery(const QByteArray &iconPackageProto);

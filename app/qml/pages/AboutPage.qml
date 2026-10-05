@@ -62,14 +62,14 @@ Page {
 
             Label {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Mi Band 8 — " + qsTr("полная поддержка")
+                text: "Mi Band 8"
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
             }
 
             Label {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "PineTime (InfiniTime) — " + qsTr("базовая поддержка")
+                text: "PineTime (InfiniTime)"
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
             }

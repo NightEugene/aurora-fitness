@@ -3,6 +3,9 @@
 #include "notificationdaemon.h"
 #include "bluezmanager.h"
 #include "appsettings.h"
+#include "xiaomi/xiaomichannel.h"
+
+#include <QImage>
 
 #include <QSocketNotifier>
 #include <QSettings>
@@ -267,6 +270,10 @@ void NotificationDaemon::handleNotify(const QString &appName,
     if (summary.isEmpty() && body.isEmpty())
         return;
 
+    // Кэш иконки для GUI-relay (песочница не читает /usr/share/icons и темы).
+    // Делаем всегда — и при владении браслетом, и при пересылке в GUI.
+    cacheIcon(package);
+
     qInfo() << "[daemon] Notify от" << appName << "—" << summary << "/" << body
             << "pkg:" << package;
 
@@ -453,11 +460,45 @@ void NotificationDaemon::forwardNotification(const QString &appName,
     flushPendingNotification();
 }
 
+void NotificationDaemon::cacheIcon(const QString &package) const
+{
+    if (package.isEmpty())
+        return;
+    // package — desktop-id или маркер (__system/__unknown): безопасное имя файла
+    const QString dir = appConfigDir() + QStringLiteral("/icons");
+    QDir().mkpath(dir);
+    const QString target = dir + QStringLiteral("/") + package + QStringLiteral(".png");
+    if (QFile::exists(target))
+        return;
+    const QStringList paths = XiaomiChannel::iconCandidatePaths(package);
+    QImage img;
+    for (const QString &p : paths) {
+        if (img.load(p))
+            break;
+    }
+    if (!img.isNull())
+        img.save(target, "PNG");
+}
+
 QString NotificationDaemon::resolveAppPackage(const QString &appName,
                                               const QString &hintId) const
 {
     if (!hintId.isEmpty())
         return hintId;
+
+    const QString lower = appName.toLower();
+
+    // Отправители без собственного desktop-файла: системные уведомления
+    // (зарядка, режим разработчика, снимки экрана) — шестерёнка; агрегированные
+    // оповещения календаря шлёт демон календаря — мапим на приложение календаря
+    static const QMap<QString, QString> aliases = {
+        {QStringLiteral("система"), QStringLiteral("__system")},
+        {QStringLiteral("пропущенные оповещения календаря"),
+         QStringLiteral("ru.omp.calendar")},
+    };
+    const QString alias = aliases.value(lower);
+    if (!alias.isEmpty())
+        return alias;
 
     // appName в Notify — локализованное имя приложения; ищем его в
     // desktop-файлах, id = имя файла без .desktop (по нему лежит иконка)
@@ -482,5 +523,14 @@ QString NotificationDaemon::resolveAppPackage(const QString &appName,
             }
         }
     }
-    return byName.value(appName.toLower());
+    const QString hit = byName.value(lower);
+    if (!hit.isEmpty())
+        return hit;
+
+    // appName сам может оказаться desktop-id (нелокализованным)
+    if (QFile::exists(QStringLiteral("/usr/share/applications/") + appName
+                      + QStringLiteral(".desktop")))
+        return appName;
+
+    return QStringLiteral("__unknown");
 }

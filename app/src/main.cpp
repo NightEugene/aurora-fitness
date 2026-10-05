@@ -106,7 +106,9 @@ int main(int argc, char *argv[])
                 if (!manager.bandReady() || sent)
                     return;
                 sent = true;
-                manager.sendTestNotification(title, body);
+                manager.sendTestNotification(title, body,
+                                             QStringLiteral("Аврора Фитнес"),
+                                             QStringLiteral("ru.nighteugene.aurorafitness"));
                 QTimer::singleShot(15000, app.data(), &QCoreApplication::quit);
             });
             QObject::connect(&manager, &BluezManager::deviceError, app.data(),
