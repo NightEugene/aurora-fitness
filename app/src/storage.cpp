@@ -101,6 +101,8 @@ bool Storage::open()
                        "bed_time INT, ts INT, stage TEXT)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS step_observations("
                        "ts INTEGER PRIMARY KEY, seen_at INTEGER, steps INT, delta INT, active INT)"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS battery_samples("
+                       "ts INTEGER PRIMARY KEY, level INT, state INT)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS manual_samples("
                        "ts INTEGER, type TEXT, value INT, PRIMARY KEY(ts, type))"),
     };
@@ -136,6 +138,28 @@ bool Storage::open()
                     "ALTER TABLE daily_summary ADD COLUMN activity_min INT"))) {
             qWarning() << "Storage: миграция activity_min:" << alter.lastError().text();
             return false;
+        }
+    }
+
+    // Миграция: поминутные active (strength-минута) и act_kcal (активные ккал)
+    // для почасовых графиков; заодно spo2/stress для старых БД
+    {
+        info.exec(QStringLiteral("PRAGMA table_info(minute_samples)"));
+        QStringList cols;
+        while (info.next())
+            cols << info.value(1).toString();
+        const QStringList needed = {QStringLiteral("spo2"), QStringLiteral("stress"),
+                                    QStringLiteral("active"), QStringLiteral("act_kcal")};
+        for (const QString &col : needed) {
+            if (cols.contains(col))
+                continue;
+            QSqlQuery alter(m_db);
+            if (!alter.exec(QStringLiteral(
+                        "ALTER TABLE minute_samples ADD COLUMN %1 INT").arg(col))) {
+                qWarning() << "Storage: миграция minute_samples." << col << ":"
+                           << alter.lastError().text();
+                return false;
+            }
         }
     }
     return true;
@@ -355,7 +379,8 @@ void Storage::saveDailyDetails(const QVariantMap &m)
     m_db.transaction();
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("INSERT OR REPLACE INTO minute_samples"
-                             "(ts, steps, hr, spo2, stress) VALUES(?, ?, ?, ?, ?)"));
+                             "(ts, steps, hr, spo2, stress, active, act_kcal)"
+                             " VALUES(?, ?, ?, ?, ?, ?, ?)"));
     int saved = 0;
     for (const QVariant &v : samples) {
         const QVariantMap s = v.toMap();
@@ -364,14 +389,20 @@ void Storage::saveDailyDetails(const QVariantMap &m)
         const qlonglong hr = s.value(QStringLiteral("hr")).toLongLong();
         const qlonglong spo2 = s.value(QStringLiteral("spo2")).toLongLong();
         const qlonglong stress = s.value(QStringLiteral("stress")).toLongLong();
+        const qlonglong active = s.value(QStringLiteral("active")).toLongLong();
+        const qlonglong actKcal = s.value(QStringLiteral("actKcal")).toLongLong();
         // Нулевые заполнители браслета не сохраняем
-        if (ts == 0 || (steps == 0 && hr == 0 && spo2 == 0 && stress == 0))
+        if (ts == 0 || (steps == 0 && hr == 0 && spo2 == 0 && stress == 0
+                        && active == 0 && actKcal == 0))
             continue;
         q.addBindValue(ts);
         q.addBindValue(s.contains(QStringLiteral("steps")) ? QVariant(steps) : QVariant());
         q.addBindValue(s.contains(QStringLiteral("hr")) ? QVariant(hr) : QVariant());
-        q.addBindValue(s.contains(QStringLiteral("spo2")) ? QVariant(spo2) : QVariant());
-        q.addBindValue(s.contains(QStringLiteral("stress")) ? QVariant(stress) : QVariant());
+        // 0 у spo2/stress — заглушка «не измерялось», храним NULL
+        q.addBindValue(s.contains(QStringLiteral("spo2")) && spo2 > 0 ? QVariant(spo2) : QVariant());
+        q.addBindValue(s.contains(QStringLiteral("stress")) && stress > 0 ? QVariant(stress) : QVariant());
+        q.addBindValue(s.contains(QStringLiteral("active")) ? QVariant(active) : QVariant());
+        q.addBindValue(s.contains(QStringLiteral("actKcal")) ? QVariant(actKcal) : QVariant());
         if (!q.exec())
             qWarning() << "Storage: insert minute_samples:" << q.lastError().text();
         else
@@ -538,7 +569,8 @@ QVariantList Storage::dailySummaries(int days)
         return out;
 
     QSqlQuery q(m_db);
-    q.prepare(QStringLiteral("SELECT ts, steps, calories, avg_hr, activity_min FROM daily_summary"
+    q.prepare(QStringLiteral("SELECT ts, steps, calories, avg_hr, activity_min,"
+                             " stress_avg, spo2_avg FROM daily_summary"
                              " ORDER BY ts DESC LIMIT ?"));
     q.addBindValue(days);
     if (!q.exec())
@@ -550,6 +582,8 @@ QVariantList Storage::dailySummaries(int days)
         row.insert(QStringLiteral("calories"), q.value(2).toLongLong());
         row.insert(QStringLiteral("avgHr"), q.value(3).toLongLong());
         row.insert(QStringLiteral("activityMin"), q.value(4).toLongLong());
+        row.insert(QStringLiteral("stressAvg"), q.value(5).toLongLong());
+        row.insert(QStringLiteral("spo2Avg"), q.value(6).toLongLong());
         out.prepend(row); // в ASC для графика
     }
     return out;
@@ -610,7 +644,8 @@ QVariantList Storage::minuteSamples(qint64 fromTs, qint64 toTs)
         return out;
 
     QSqlQuery q(m_db);
-    q.prepare(QStringLiteral("SELECT ts, steps, hr FROM minute_samples"
+    q.prepare(QStringLiteral("SELECT ts, steps, hr, spo2, stress, active, act_kcal"
+                             " FROM minute_samples"
                              " WHERE ts >= ? AND ts <= ? ORDER BY ts ASC"));
     q.addBindValue(fromTs);
     q.addBindValue(toTs);
@@ -619,8 +654,18 @@ QVariantList Storage::minuteSamples(qint64 fromTs, qint64 toTs)
     while (q.next()) {
         QVariantMap row;
         row.insert(QStringLiteral("ts"), q.value(0).toLongLong());
-        row.insert(QStringLiteral("steps"), q.value(1).toLongLong());
-        row.insert(QStringLiteral("hr"), q.value(2).toLongLong());
+        if (!q.value(1).isNull())
+            row.insert(QStringLiteral("steps"), q.value(1).toLongLong());
+        if (!q.value(2).isNull())
+            row.insert(QStringLiteral("hr"), q.value(2).toLongLong());
+        if (!q.value(3).isNull())
+            row.insert(QStringLiteral("spo2"), q.value(3).toLongLong());
+        if (!q.value(4).isNull())
+            row.insert(QStringLiteral("stress"), q.value(4).toLongLong());
+        if (!q.value(5).isNull())
+            row.insert(QStringLiteral("active"), q.value(5).toLongLong());
+        if (!q.value(6).isNull())
+            row.insert(QStringLiteral("actKcal"), q.value(6).toLongLong());
         out.append(row);
     }
     return out;
@@ -634,4 +679,92 @@ int Storage::minuteSampleCount()
     if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM minute_samples")) || !q.next())
         return 0;
     return q.value(0).toInt();
+}
+
+void Storage::saveBattery(int level, int state)
+{
+    if (!m_ready || level <= 0)
+        return;
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("INSERT OR REPLACE INTO battery_samples(ts, level, state)"
+                             " VALUES(?, ?, ?)"));
+    q.addBindValue(QDateTime::currentDateTime().toTime_t());
+    q.addBindValue(level);
+    q.addBindValue(state);
+    if (!q.exec())
+        qWarning() << "Storage: insert battery_samples:" << q.lastError().text();
+}
+
+QVariantList Storage::batteryHistory(int days)
+{
+    QVariantList out;
+    if (!m_ready || days <= 0)
+        return out;
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("SELECT ts, level, state FROM battery_samples"
+                             " WHERE ts >= ? ORDER BY ts ASC"));
+    q.addBindValue(QDateTime::currentDateTime().addDays(-days).toTime_t());
+    if (!q.exec())
+        return out;
+    while (q.next()) {
+        QVariantMap row;
+        row.insert(QStringLiteral("ts"), q.value(0).toLongLong());
+        row.insert(QStringLiteral("level"), q.value(1).toLongLong());
+        row.insert(QStringLiteral("state"), q.value(2).toLongLong());
+        out.append(row);
+    }
+    return out;
+}
+
+QVariantMap Storage::batteryStats()
+{
+    QVariantMap out;
+    if (!m_ready)
+        return out;
+
+    // Вся история по возрастанию — ищем последнюю зарядку и средний расход
+    QSqlQuery q(m_db);
+    if (!q.exec(QStringLiteral("SELECT ts, level, state FROM battery_samples"
+                               " ORDER BY ts ASC")))
+        return out;
+
+    qlonglong lastChargeTs = 0;
+    qlonglong prevTs = 0;
+    int prevLevel = -1;
+    qlonglong firstTs = 0;
+    int firstLevel = -1;
+    int lastLevel = -1;
+    int chargedDiff = 0; // сумма подъёмов уровня (зарядки), чтобы не считать их в расход
+    while (q.next()) {
+        const qlonglong ts = q.value(0).toLongLong();
+        const int level = q.value(1).toInt();
+        const int state = q.value(2).toInt();
+        if (firstTs == 0) {
+            firstTs = ts;
+            firstLevel = level;
+        }
+        // Зарядка: state 1 (charging) или скачок уровня вверх
+        // (state 2 у MB8 бывает и при 42% — не признак зарядки)
+        if (state == 1 || (prevLevel >= 0 && level >= prevLevel + 2))
+            lastChargeTs = ts;
+        if (prevLevel >= 0 && level > prevLevel)
+            chargedDiff += level - prevLevel;
+        prevTs = ts;
+        prevLevel = level;
+        lastLevel = level;
+    }
+
+    if (lastChargeTs > 0) {
+        out.insert(QStringLiteral("lastChargeTs"), lastChargeTs);
+        out.insert(QStringLiteral("daysSinceCharge"),
+                   qRound((QDateTime::currentDateTime().toTime_t() - lastChargeTs) / 86400.0));
+    }
+    if (firstTs > 0 && prevTs > firstTs && lastLevel >= 0) {
+        // Расход %/день без учёта зарядок
+        const double days = (prevTs - firstTs) / 86400.0;
+        const double drain = (firstLevel + chargedDiff - lastLevel) / days;
+        if (drain >= 0)
+            out.insert(QStringLiteral("drainPerDay"), qRound(drain * 10) / 10.0);
+    }
+    return out;
 }

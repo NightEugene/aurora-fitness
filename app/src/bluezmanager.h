@@ -50,6 +50,11 @@ class BluezManager : public QObject
     Q_PROPERTY(double weightKg READ weightKg WRITE setWeightKg NOTIFY profileChanged)
     Q_PROPERTY(int heightCm READ heightCm WRITE setHeightCm NOTIFY profileChanged)
     Q_PROPERTY(QVariantList activityResults READ activityResults NOTIFY activityResultsChanged)
+    // Видимость карточек главного экрана (ключи: steps, calories, activity,
+    // hr, sleep, stress, spo2, battery; отсутствие ключа = показывать)
+    Q_PROPERTY(QVariantMap cardVisibility READ cardVisibility NOTIFY viewConfigChanged)
+    // Порядок карточек (страница «Вид»): QStringList id карточек
+    Q_PROPERTY(QStringList cardOrder READ cardOrder NOTIFY viewConfigChanged)
 
 public:
     explicit BluezManager(QObject *parent = nullptr);
@@ -117,6 +122,12 @@ public:
     QVariantList activityResults() const { return m_activityResults; }
     Storage *storage() { return &m_storage; }
 
+    QVariantMap cardVisibility() const;
+    Q_INVOKABLE void setCardVisible(const QString &id, bool visible);
+    QStringList cardOrder() const;
+    Q_INVOKABLE void moveCard(const QString &id, int dir);
+    Q_INVOKABLE void setCardOrder(const QStringList &order);
+
 public slots:
     // Консольный режим: печатает результат в stdout и завершает приложение.
     void cliScanFinished();
@@ -144,6 +155,7 @@ signals:
     void bandReadyChanged();
     void capabilitiesChanged();
     void profileChanged();
+    void viewConfigChanged();
     void bandDisconnected();   // обрыв соединения с браслетом
 
 private slots:

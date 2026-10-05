@@ -19,6 +19,7 @@ public:
 
     // Диспетчер по m["kind"]: dailySummary / dailyDetails / sleep / manualSamples
     void saveParsed(const QVariantMap &m);
+    void saveBattery(int level, int state);
     void selectDevice(const QString &address);
     void saveLiveReading(int steps, int heartRate);
     void setLiveEstimation(bool calories, bool activity);
@@ -32,6 +33,8 @@ public:
     Q_INVOKABLE QVariantList sleepStages(qlonglong bedTime);
     Q_INVOKABLE QVariantList minuteSamples(qint64 fromTs, qint64 toTs);
     Q_INVOKABLE int minuteSampleCount();
+    Q_INVOKABLE QVariantList batteryHistory(int days);
+    Q_INVOKABLE QVariantMap batteryStats();
 
 signals:
     void dataChanged();

@@ -11,7 +11,6 @@ Page {
     property date currentDate: new Date()
     property var day: ({})
     property var summaries: []
-    property var hourly: []
 
     readonly property color cardColor: Theme.rgba(Theme.primaryColor, 0.16)
     readonly property color accentKcal: "#ff9800"
@@ -97,18 +96,7 @@ Page {
         var t0 = dayStartTs(currentDate)
         day = storage.daySummary(t0)
 
-        var h = []
-        for (var i = 0; i < 24; i++)
-            h.push(0)
-        var samples = storage.minuteSamples(t0, t0 + 86399)
-        for (i = 0; i < samples.length; i++) {
-            var hr = new Date(samples[i].ts * 1000).getHours()
-            h[hr] += samples[i].steps || 0
-        }
-        hourly = h
-
         ringsCanvas.requestPaint()
-        hourlyCanvas.requestPaint()
         weekRepeater.model = 0 // пересоздать мини-кольца
         weekRepeater.model = 7
     }
@@ -469,70 +457,6 @@ Page {
                                     font.pixelSize: Theme.fontSizeSmall
                                     font.bold: true
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // --- Шаги по часам ---
-            Rectangle {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * x
-                height: hourlyCol.height + 2 * Theme.paddingMedium
-                radius: Theme.dp(20)
-                color: page.cardColor
-
-                Column {
-                    id: hourlyCol
-                    x: Theme.paddingLarge
-                    y: Theme.paddingMedium
-                    width: parent.width - 2 * x
-                    spacing: Theme.paddingSmall
-
-                    Label {
-                        text: qsTr("Шаги по часам")
-                        color: Theme.primaryColor
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-
-                    Canvas {
-                        id: hourlyCanvas
-                        width: parent.width
-                        height: Theme.dp(140)
-
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            var h = page.hourly
-                            if (!h || h.length !== 24)
-                                return
-                            var max = 0
-                            for (var i = 0; i < 24; i++)
-                                if (h[i] > max)
-                                    max = h[i]
-                            var labelH = Theme.fontSizeExtraSmall
-                            var chartH = height - labelH - Theme.paddingSmall
-                            var bw = width / 24
-                            var barW = Math.max(2, bw * 0.6)
-
-                            // Подписи часов: 0, 6, 12, 18
-                            ctx.fillStyle = Theme.rgba(Theme.secondaryColor, 1.0)
-                            ctx.font = Theme.fontSizeExtraSmall + "px sans-serif"
-                            ctx.textAlign = "center"
-                            var marks = [0, 6, 12, 18]
-                            for (i = 0; i < marks.length; i++)
-                                ctx.fillText(marks[i], marks[i] * bw + bw / 2, height)
-
-                            if (max <= 0)
-                                return
-                            for (i = 0; i < 24; i++) {
-                                if (h[i] <= 0)
-                                    continue
-                                var bh = Math.max(2, chartH * h[i] / max)
-                                ctx.fillStyle = Theme.highlightColor
-                                ctx.fillRect(i * bw + (bw - barW) / 2, chartH - bh,
-                                             barW, bh)
                             }
                         }
                     }

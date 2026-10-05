@@ -66,6 +66,9 @@ DISTFILES += \
     qml/pages/SleepPage.qml \
     qml/pages/SleepDateDialog.qml \
     qml/pages/StatsPage.qml \
+    qml/pages/MetricPage.qml \
+    qml/pages/BatteryPage.qml \
+    qml/pages/ViewPage.qml \
     qml/cover/DefaultCoverPage.qml \
     ru.nighteugene.aurorafitness.desktop \
     ru.nighteugene.aurorafitness-daemon.service

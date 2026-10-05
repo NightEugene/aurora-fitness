@@ -244,14 +244,19 @@ QVariantMap parseDailyDetails(const xiaomiactivity::FileId &id, const QByteArray
                 sample.insert(QStringLiteral("steps"), qlonglong(cp.get(2, 14)));
         }
         if (cp.nextGroup(8)) {
-            // active calories: get(2, 6) — не отдаём
+            // Активные калории за минуту: бит наличия — idx 1 (как hasSecond()
+            // в Gadgetbridge), само значение — младшие 6 бит (idx 2)
+            if (cp.has(1))
+                sample.insert(QStringLiteral("actKcal"), qlonglong(cp.get(2, 6)));
         }
         if (cp.nextGroup(8)) {
             // Маркер «strength»-минуты (средне-высокая активность): 0x60.
             // Сверено с MHStrengthRecord в логах Mi Fitness — 17/17 минут
             // совпали; сумма за день = «время активности» на браслете.
-            if (cp.has(0) && cp.get(0, 8) == 0x60)
+            if (cp.has(0) && cp.get(0, 8) == 0x60) {
                 ++strengthMinutes;
+                sample.insert(QStringLiteral("active"), qlonglong(1));
+            }
         }
         if (cp.nextGroup(16)) {
             // distance: get(0, 16) * 100 см — не отдаём

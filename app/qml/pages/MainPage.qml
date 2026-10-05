@@ -18,7 +18,6 @@ Page {
     }
 
     property var today: ({})
-    property var week: []
     property var sleep: []
     property var hourly: []
     property string lastSync: ""
@@ -120,7 +119,6 @@ Page {
 
     function reload() {
         today = storage.todaySummary()
-        week = storage.dailySummaries(7)
         // Сессии без фаз (например, дневная дрёмота) не показываем
         var all = storage.sleepSessions(7)
         var nn = []
@@ -134,8 +132,8 @@ Page {
         hourly = storage.hourlyActivity()
         lastSync = bluez.lastSyncTimeText()
         ringCanvas.requestPaint()
-        weekCanvas.requestPaint()
         hourlyCanvas.requestPaint()
+        cardsRepeater.model = cardModel()
     }
 
     function fmtDate(ts) {
@@ -151,7 +149,115 @@ Page {
         return v !== undefined && v !== null ? v : "—"
     }
 
+    // Модель карточек сетки: порядок и видимость из настроек «Вид»,
+    // значения — из текущих данных. frac < 0 — без полосы прогресса.
+    function cardModel() {
+        var cv = bluez.cardVisibility
+        var order = bluez.cardOrder
+        var out = []
+        for (var i = 0; i < order.length; i++) {
+            var id = order[i]
+            if (cv[id] === false)
+                continue
+            var c = cardDef(id)
+            if (c)
+                out.push(c)
+        }
+        return out
+    }
+
+    function cardDef(id) {
+        switch (id) {
+        case "steps":
+            return { name: qsTr("Шаги"), color: Theme.highlightColor,
+                value: val(today.steps),
+                frac: (today.steps || 0) / bluez.stepsGoal,
+                sub: qsTr("из") + " " + bluez.stepsGoal
+                     + multiplierText(today.steps || 0, bluez.stepsGoal),
+                page: "MetricPage.qml",
+                props: { metricTitle: qsTr("Шаги"), accent: Theme.highlightColor,
+                         unit: qsTr("шагов"), field: "steps",
+                         goal: bluez.stepsGoal, intraday: false,
+                         hourlyField: "steps", hourlyMode: "sum" } }
+        case "calories":
+            return { name: qsTr("Ккал"), color: accentKcal,
+                value: val(today.calories),
+                frac: (today.calories || 0) / bluez.caloriesGoal,
+                sub: qsTr("из") + " " + bluez.caloriesGoal + " " + qsTr("ккал")
+                     + multiplierText(today.calories || 0, bluez.caloriesGoal),
+                page: "MetricPage.qml",
+                props: { metricTitle: qsTr("Калории"), accent: accentKcal,
+                         unit: qsTr("ккал"), field: "calories",
+                         goal: bluez.caloriesGoal, intraday: false,
+                         hourlyField: "actKcal", hourlyMode: "sum" } }
+        case "activity":
+            return { name: qsTr("Активность"), color: accentActivity,
+                value: val(today.activityMin),
+                frac: (today.activityMin || 0) / bluez.activityGoal,
+                sub: qsTr("из") + " " + bluez.activityGoal + " " + qsTr("мин")
+                     + multiplierText(today.activityMin || 0, bluez.activityGoal),
+                page: "MetricPage.qml",
+                props: { metricTitle: qsTr("Активность"), accent: accentActivity,
+                         unit: qsTr("мин"), field: "activityMin",
+                         goal: bluez.activityGoal, intraday: false,
+                         hourlyField: "active", hourlyMode: "sum" } }
+        case "hr":
+            return { name: qsTr("Пульс"), color: accentHr,
+                value: val(bluez.heartRate > 0 ? bluez.heartRate : today.avgHr),
+                frac: -1,
+                sub: qsTr("мин") + " " + val(today.minHr)
+                     + " · " + qsTr("макс") + " " + val(today.maxHr),
+                page: "MetricPage.qml",
+                props: { metricTitle: qsTr("Пульс"), accent: accentHr,
+                         unit: qsTr("уд/мин"), field: "avgHr",
+                         goal: 0, intraday: true } }
+        case "sleep":
+            if (!bluez.supportsSleep)
+                return null
+            return { name: qsTr("Сон"), color: accentSleep,
+                value: sleep.length > 0 && sleep[0].sleepMin > 0
+                       ? fmtHM(sleep[0].sleepMin) : "—",
+                frac: -1,
+                sub: sleep.length > 0 ? fmtDate(sleep[0].bedTime) : qsTr("нет данных"),
+                page: "SleepPage.qml", props: {} }
+        case "stress":
+            if (!bluez.supportsStress)
+                return null
+            return { name: qsTr("Стресс"), color: accentStress,
+                value: val(today.stressAvg), frac: -1, sub: qsTr("средний"),
+                page: "MetricPage.qml",
+                props: { metricTitle: qsTr("Стресс"), accent: accentStress,
+                         unit: "", field: "stressAvg",
+                         goal: 0, intraday: false,
+                         hourlyField: "stress", hourlyMode: "avg" } }
+        case "spo2":
+            if (!bluez.supportsSpO2)
+                return null
+            return { name: "SpO2", color: accentSpo2,
+                value: val(today.spo2Avg), frac: -1, sub: qsTr("средний, %"),
+                page: "MetricPage.qml",
+                props: { metricTitle: "SpO2", accent: accentSpo2,
+                         unit: "%", field: "spo2Avg",
+                         goal: 0, intraday: false,
+                         hourlyField: "spo2", hourlyMode: "avg" } }
+        case "battery":
+            var lvl = bluez.bandInfo.batteryLevel
+            return { name: qsTr("Батарея"), color: accentBattery,
+                value: lvl !== undefined ? lvl + " %" : "—",
+                frac: lvl !== undefined ? lvl / 100.0 : -1,
+                sub: bluez.bandInfo.batteryState === 1 ? qsTr("заряжается") : "",
+                page: "BatteryPage.qml", props: {} }
+        }
+        return null
+    }
+
     Component.onCompleted: reload()
+
+    Connections {
+        target: bluez
+        onViewConfigChanged: cardsRepeater.model = page.cardModel()
+        onCapabilitiesChanged: cardsRepeater.model = page.cardModel()
+    }
 
     // Автообновление раз в минуту, пока страница активна (подхватывает
     // данные демона-автосинка), плюс reload при возвращении на страницу
@@ -239,6 +345,11 @@ Page {
                     text: qsTr("Цели")
                     icon.source: "image://theme/icon-m-administrator"
                     onClicked: pageStack.push(Qt.resolvedUrl("GoalsPage.qml"))
+                }
+                PopupMenuItem {
+                    text: qsTr("Вид")
+                    icon.source: "image://theme/icon-m-display"
+                    onClicked: pageStack.push(Qt.resolvedUrl("ViewPage.qml"))
                 }
                 PopupMenuDividerItem {}
                 PopupMenuItem {
@@ -425,339 +536,86 @@ Page {
                 }
             }
 
-            // --- Карточки метрик 2x2 ---
+            // --- Карточки метрик 2xN: состав и порядок — из настроек «Вид» ---
             Grid {
                 id: metricsGrid
                 x: Theme.horizontalPageMargin
                 width: parent.width - 2 * x
                 columns: 2
                 spacing: Theme.paddingMedium
-                readonly property int metricCount: 3 + (bluez.supportsSleep ? 1 : 0)
-                                                    + (bluez.supportsStress ? 1 : 0)
-                                                    + (bluez.supportsSpO2 ? 1 : 0)
-                readonly property real cardHeight: Math.max(caloriesContent.height, activityContent.height,
-                                                           heartRateContent.height, sleepContent.height,
-                                                           stressContent.height, spo2Content.height,
-                                                           batteryContent.height)
-                                                   + 2 * Theme.paddingLarge
 
-                // Ккал
-                Rectangle {
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: page.cardColor
+                Repeater {
+                    id: cardsRepeater
+                    model: []
 
-                    Column {
-                        id: caloriesContent
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
+                    delegate: Rectangle {
+                        width: (metricsGrid.width - Theme.paddingMedium) / 2
+                        height: cardCol.height + 2 * Theme.paddingLarge
+                        radius: Theme.dp(20)
+                        color: cardMouse.pressed ? Theme.rgba(Theme.highlightColor, 0.3)
+                                                 : page.cardColor
 
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentKcal
-                        }
-                        Label {
-                            text: qsTr("Ккал")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: page.val(page.today.calories)
-                            color: page.accentKcal
-                            font.pixelSize: Theme.fontSizeExtraLarge
-                            font.bold: true
-                        }
-                        // Прогресс к дневной цели по калориям
-                        Rectangle {
-                            width: parent.width
-                            height: Theme.dp(6)
-                            radius: height / 2
-                            color: Theme.rgba(page.accentKcal, 0.2)
+                        Column {
+                            id: cardCol
+                            x: Theme.paddingLarge
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 2 * x
+                            spacing: Theme.paddingSmall
 
+                            Rectangle {
+                                width: Theme.dp(14); height: width; radius: width / 2
+                                color: modelData.color
+                            }
+                            Label {
+                                width: parent.width
+                                height: Math.round(Theme.fontSizeExtraSmall * 1.4)
+                                text: modelData.name
+                                color: Theme.secondaryColor
+                                font.pixelSize: Theme.fontSizeExtraSmall
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                width: parent.width
+                                height: Math.round(Theme.fontSizeExtraLarge * 1.25)
+                                text: modelData.value
+                                color: modelData.color
+                                font.pixelSize: Theme.fontSizeExtraLarge
+                                font.bold: true
+                                elide: Text.ElideRight
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            // Полоса прогресса к цели (или прозрачный спейсер
+                            // той же высоты — все карточки одной высоты)
                             Rectangle {
                                 width: parent.width
-                                       * Math.min(1.0, (page.today.calories || 0) / bluez.caloriesGoal)
-                                height: parent.height
-                                radius: parent.radius
-                                color: (page.today.calories || 0) >= bluez.caloriesGoal
-                                       ? page.accentKcalBright : page.accentKcal
+                                height: Theme.dp(6)
+                                radius: height / 2
+                                color: Theme.rgba(modelData.color, 0.2)
+                                opacity: modelData.frac >= 0 ? 1 : 0
+
+                                Rectangle {
+                                    width: parent.width
+                                           * Math.max(0, Math.min(1.0, modelData.frac))
+                                    height: parent.height
+                                    radius: parent.radius
+                                    color: modelData.color
+                                }
                             }
-                        }
-                        Label {
-                            text: qsTr("из") + " " + bluez.caloriesGoal + " " + qsTr("ккал")
-                                  + page.multiplierText(page.today.calories || 0, bluez.caloriesGoal)
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                    }
-                }
-
-                // Активность (время активности, мин)
-                Rectangle {
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: page.cardColor
-
-                    Column {
-                        id: activityContent
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
-
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentActivity
-                        }
-                        Label {
-                            text: qsTr("Активность")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: page.val(page.today.activityMin)
-                            color: page.accentActivity
-                            font.pixelSize: Theme.fontSizeExtraLarge
-                            font.bold: true
-                        }
-                        // Прогресс к дневной цели по активности
-                        Rectangle {
-                            width: parent.width
-                            height: Theme.dp(6)
-                            radius: height / 2
-                            color: Theme.rgba(page.accentActivity, 0.2)
-
-                            Rectangle {
+                            Label {
                                 width: parent.width
-                                       * Math.min(1.0, (page.today.activityMin || 0) / bluez.activityGoal)
-                                height: parent.height
-                                radius: parent.radius
-                                color: (page.today.activityMin || 0) >= bluez.activityGoal
-                                       ? page.accentActivityBright : page.accentActivity
+                                height: Math.round(Theme.fontSizeExtraSmall * 1.4)
+                                text: modelData.sub
+                                color: Theme.secondaryColor
+                                font.pixelSize: Theme.fontSizeExtraSmall
+                                elide: Text.ElideRight
                             }
                         }
-                        Label {
-                            text: qsTr("из") + " " + bluez.activityGoal + " " + qsTr("мин")
-                                  + page.multiplierText(page.today.activityMin || 0, bluez.activityGoal)
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                    }
-                }
 
-                // Пульс
-                Rectangle {
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: page.cardColor
-
-                    Column {
-                        id: heartRateContent
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
-
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentHr
-                        }
-                        Label {
-                            text: qsTr("Пульс")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: page.val(bluez.heartRate > 0 ? bluez.heartRate : page.today.avgHr)
-                            color: page.accentHr
-                            font.pixelSize: Theme.fontSizeExtraLarge
-                            font.bold: true
-                        }
-                        Label {
-                            text: qsTr("мин") + " " + page.val(page.today.minHr)
-                                  + " · " + qsTr("макс") + " " + page.val(page.today.maxHr)
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                    }
-                }
-
-                // Сон
-                Rectangle {
-                    visible: bluez.supportsSleep
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: sleepMouse.pressed ? Theme.rgba(Theme.highlightColor, 0.3)
-                                              : page.cardColor
-
-                    Column {
-                        id: sleepContent
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
-
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentSleep
-                        }
-                        Label {
-                            text: qsTr("Сон")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: page.sleep.length > 0 && page.sleep[0].sleepMin > 0
-                                  ? page.fmtHM(page.sleep[0].sleepMin) : "—"
-                            color: page.accentSleep
-                            font.pixelSize: Theme.fontSizeLarge
-                            font.bold: true
-                        }
-                        Label {
-                            text: page.sleep.length > 0
-                                  ? page.fmtDate(page.sleep[0].bedTime) : qsTr("нет данных")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                    }
-
-                    MouseArea {
-                        id: sleepMouse
-                        anchors.fill: parent
-                        onClicked: pageStack.push(Qt.resolvedUrl("SleepPage.qml"))
-                    }
-                }
-
-                // Стресс
-                Rectangle {
-                    visible: bluez.supportsStress
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: page.cardColor
-
-                    Column {
-                        id: stressContent
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
-
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentStress
-                        }
-                        Label {
-                            text: qsTr("Стресс")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: page.val(page.today.stressAvg)
-                            color: page.accentStress
-                            font.pixelSize: Theme.fontSizeExtraLarge
-                            font.bold: true
-                        }
-                        Label {
-                            text: qsTr("средний")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                    }
-                }
-
-                // SpO2
-                Rectangle {
-                    visible: bluez.supportsSpO2
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: page.cardColor
-
-                    Column {
-                        id: spo2Content
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
-
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentSpo2
-                        }
-                        Label {
-                            text: "SpO2"
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: page.val(page.today.spo2Avg)
-                            color: page.accentSpo2
-                            font.pixelSize: Theme.fontSizeExtraLarge
-                            font.bold: true
-                        }
-                        Label {
-                            text: qsTr("средний, %")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                    }
-                }
-
-                Rectangle {
-                    visible: metricsGrid.metricCount % 2 === 1
-                    width: (parent.width - Theme.paddingMedium) / 2
-                    height: metricsGrid.cardHeight
-                    radius: Theme.dp(20)
-                    color: page.cardColor
-                    readonly property int level: bluez.bandInfo.batteryLevel !== undefined
-                                                 ? bluez.bandInfo.batteryLevel : -1
-
-                    Column {
-                        id: batteryContent
-                        x: Theme.paddingLarge
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 2 * x
-                        spacing: Theme.paddingSmall
-
-                        Rectangle {
-                            width: Theme.dp(14); height: width; radius: width / 2
-                            color: page.accentBattery
-                        }
-                        Label {
-                            text: qsTr("Батарея")
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
-                        }
-                        Label {
-                            text: batteryContent.parent.level >= 0 ? batteryContent.parent.level : "—"
-                            color: page.accentBattery
-                            font.pixelSize: Theme.fontSizeExtraLarge
-                            font.bold: true
-                        }
-                        Rectangle {
-                            width: parent.width
-                            height: Theme.dp(6)
-                            radius: height / 2
-                            color: Theme.rgba(page.accentBattery, 0.2)
-
-                            Rectangle {
-                                width: parent.width * Math.max(0, Math.min(100, batteryContent.parent.level)) / 100
-                                height: parent.height
-                                radius: parent.radius
-                                color: page.accentBattery
-                            }
-                        }
-                        Label {
-                            text: qsTr("из") + " 100 %"
-                            color: Theme.secondaryColor
-                            font.pixelSize: Theme.fontSizeExtraSmall
+                        MouseArea {
+                            id: cardMouse
+                            anchors.fill: parent
+                            onClicked: pageStack.push(Qt.resolvedUrl(modelData.page),
+                                                      modelData.props)
                         }
                     }
                 }
@@ -812,90 +670,6 @@ Page {
                                     ctx.fillStyle = Theme.secondaryColor
                                     ctx.fillText(i, i * slot + slot / 2, height - Theme.dp(2))
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // --- Шаги за 7 дней ---
-            Rectangle {
-                x: Theme.horizontalPageMargin
-                width: parent.width - 2 * x
-                height: weekCol.height + 2 * Theme.paddingMedium
-                radius: Theme.dp(20)
-                color: page.cardColor
-                visible: page.week.length > 0
-
-                Column {
-                    id: weekCol
-                    x: Theme.paddingLarge
-                    y: Theme.paddingMedium
-                    width: parent.width - 2 * x
-                    spacing: Theme.paddingSmall
-
-                    Label {
-                        text: qsTr("Шаги за 7 дней")
-                        color: Theme.primaryColor
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-
-                    Canvas {
-                        id: weekCanvas
-                        width: parent.width
-                        height: Theme.dp(300)
-
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            ctx.clearRect(0, 0, width, height)
-                            var days = page.week
-                            if (days.length === 0)
-                                return
-
-                            var maxSteps = 0
-                            for (var i = 0; i < days.length; i++)
-                                maxSteps = Math.max(maxSteps, days[i].steps || 0)
-
-                            var labelH = Theme.fontSizeExtraSmall * 2.2
-                            var chartH = height - labelH
-                            var slot = width / days.length
-                            var barW = Math.min(slot * 0.55, Theme.dp(64))
-                            var todayIdx = days.length - 1
-
-                            ctx.font = Theme.fontSizeExtraSmall + "px sans-serif"
-                            ctx.textAlign = "center"
-                            for (i = 0; i < days.length; i++) {
-                                var steps = days[i].steps || 0
-                                var h = maxSteps > 0 ? (chartH * 0.8) * steps / maxSteps : 0
-                                var bx = i * slot + (slot - barW) / 2
-                                var by = chartH - h
-                                var isToday = (i === todayIdx)
-
-                                ctx.fillStyle = isToday
-                                        ? Theme.highlightColor
-                                        : Theme.rgba(Theme.highlightColor, 0.35)
-                                if (h > 0) {
-                                    // Столбик со скруглённой верхушкой
-                                    var r = Math.min(barW / 2, h, Theme.dp(10))
-                                    ctx.beginPath()
-                                    ctx.moveTo(bx, by + h)
-                                    ctx.lineTo(bx, by + r)
-                                    ctx.quadraticCurveTo(bx, by, bx + r, by)
-                                    ctx.lineTo(bx + barW - r, by)
-                                    ctx.quadraticCurveTo(bx + barW, by, bx + barW, by + r)
-                                    ctx.lineTo(bx + barW, by + h)
-                                    ctx.closePath()
-                                    ctx.fill()
-                                }
-
-                                if (steps > 0) {
-                                    ctx.fillStyle = isToday
-                                            ? Theme.highlightColor : Theme.secondaryColor
-                                    ctx.fillText(steps, bx + barW / 2,
-                                                 Math.max(Theme.fontSizeExtraSmall, by - Theme.dp(10)))
-                                }
-                                ctx.fillStyle = Theme.secondaryColor
-                                ctx.fillText(page.fmtDate(days[i].ts), bx + barW / 2, height - 2)
                             }
                         }
                     }

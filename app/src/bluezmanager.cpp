@@ -599,6 +599,7 @@ void BluezManager::setupWearableChannel()
     connect(m_channel, &WearableChannel::batteryReceived, this, [this](int level, int state) {
         m_bandInfo.insert(QStringLiteral("batteryLevel"), level);
         m_bandInfo.insert(QStringLiteral("batteryState"), state);
+        m_storage.saveBattery(level, state);
         emit bandInfoChanged();
         setBusy(false); // auth завершена; дальше синк крутит свой индикатор
         emit bandBatteryReceived(level, state);
@@ -901,9 +902,79 @@ QString BluezManager::connectedDeviceName() const
     return m_connectedAddress;
 }
 
-void BluezManager::setStepsGoal(int goal)
+static const QStringList &cardIds()
 {
-    if (goal <= 0 || goal == m_stepsGoal)
+    static const QStringList ids = {QStringLiteral("steps"), QStringLiteral("calories"),
+                                    QStringLiteral("activity"), QStringLiteral("hr"),
+                                    QStringLiteral("sleep"), QStringLiteral("stress"),
+                                    QStringLiteral("spo2"), QStringLiteral("battery")};
+    return ids;
+}
+
+QVariantMap BluezManager::cardVisibility() const
+{
+    QVariantMap out;
+    const QSettings settings = appSettings();
+    for (const QString &id : cardIds())
+        out.insert(id, settings.value(QStringLiteral("view/card/") + id, true).toBool());
+    return out;
+}
+
+void BluezManager::setCardVisible(const QString &id, bool visible)
+{
+    QSettings settings = appSettings();
+    settings.setValue(QStringLiteral("view/card/") + id, visible);
+    emit viewConfigChanged();
+}
+
+QStringList BluezManager::cardOrder() const
+{
+    const QString saved = appSettings().value(QStringLiteral("view/order")).toString();
+    QStringList order = saved.split(QLatin1Char(','), QString::SkipEmptyParts);
+    // выкидываем неизвестные, добиваем новые в конец
+    QStringList filtered;
+    for (const QString &id : order) {
+        if (cardIds().contains(id) && !filtered.contains(id))
+            filtered << id;
+    }
+    for (const QString &id : cardIds()) {
+        if (!filtered.contains(id))
+            filtered << id;
+    }
+    return filtered;
+}
+
+void BluezManager::moveCard(const QString &id, int dir)
+{
+    QStringList order = cardOrder();
+    const int i = order.indexOf(id);
+    const int j = i + dir;
+    if (i < 0 || j < 0 || j >= order.size())
+        return;
+    order.swap(i, j);
+    QSettings settings = appSettings();
+    settings.setValue(QStringLiteral("view/order"), order.join(QLatin1Char(',')));
+    emit viewConfigChanged();
+}
+
+void BluezManager::setCardOrder(const QStringList &order)
+{
+    QStringList full;
+    for (const QString &id : order) {
+        if (cardIds().contains(id) && !full.contains(id))
+            full << id;
+    }
+    for (const QString &id : cardIds()) {
+        if (!full.contains(id))
+            full << id;
+    }
+    QSettings settings = appSettings();
+    settings.setValue(QStringLiteral("view/order"), full.join(QLatin1Char(',')));
+    emit viewConfigChanged();
+}
+
+void BluezManager::setStepsGoal(int goal)
+{    if (goal <= 0 || goal == m_stepsGoal)
         return;
     m_stepsGoal = goal;
     QSettings settings = appSettings();
