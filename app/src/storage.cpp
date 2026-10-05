@@ -29,7 +29,20 @@ static const QMap<QString, QString> SUMMARY_COLUMNS = {
 
 Storage::Storage(QObject *parent) : QObject(parent)
 {
+    m_device = appSettings().value(QStringLiteral("device/storageId")).toString().toLower();
+    m_device.remove(QLatin1Char(':'));
+    const QVariantMap capabilities = appSettings().value(QStringLiteral("device/capabilities")).toMap();
+    m_estimateCalories = !capabilities.value(QStringLiteral("nativeCalories"), true).toBool();
+    m_estimateActivity = !capabilities.value(QStringLiteral("nativeActivity"), true).toBool();
     m_ready = open();
+}
+
+Storage::~Storage()
+{
+    const QString connection = m_db.connectionName();
+    m_db.close();
+    m_db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connection);
 }
 
 bool Storage::open()
@@ -45,7 +58,8 @@ bool Storage::open()
     }
     QDir().mkpath(dirPath);
 
-    const QString dbPath = dirPath + QStringLiteral("/aurorafitness.db");
+    const QString dbPath = dirPath + (m_device.isEmpty() ? QStringLiteral("/aurorafitness.db")
+            : QStringLiteral("/device-%1.db").arg(m_device));
 
     // Разовая миграция со старых путей
     const QStringList oldPaths = {
@@ -59,7 +73,7 @@ bool Storage::open()
             + QStringLiteral("/aurorafitness.db"),
     };
     for (const QString &oldPath : oldPaths) {
-        if (!QFile::exists(dbPath) && oldPath != dbPath && QFile::exists(oldPath))
+        if (m_device.isEmpty() && !QFile::exists(dbPath) && oldPath != dbPath && QFile::exists(oldPath))
             QFile::copy(oldPath, dbPath);
     }
 
@@ -85,6 +99,8 @@ bool Storage::open()
         // Пофазовая временная шкала сна (для гипнограммы)
         QStringLiteral("CREATE TABLE IF NOT EXISTS sleep_stages("
                        "bed_time INT, ts INT, stage TEXT)"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS step_observations("
+                       "ts INTEGER PRIMARY KEY, seen_at INTEGER, steps INT, delta INT, active INT)"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS manual_samples("
                        "ts INTEGER, type TEXT, value INT, PRIMARY KEY(ts, type))"),
     };
@@ -138,6 +154,144 @@ void Storage::saveParsed(const QVariantMap &m)
         saveSleep(m);
     else if (kind == QStringLiteral("manualSamples"))
         saveManualSamples(m);
+}
+
+void Storage::selectDevice(const QString &address)
+{
+    QString device = address.toLower();
+    device.remove(QLatin1Char(':'));
+    if (device == m_device)
+        return;
+    const QString connection = m_db.connectionName();
+    m_db.close();
+    m_db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connection);
+    m_device = device;
+    m_ready = open();
+    emit dataChanged();
+}
+
+void Storage::saveLiveReading(int steps, int heartRate)
+{
+    if (!m_ready)
+        return;
+    const qint64 now = QDateTime::currentDateTime().toTime_t();
+    const QDate date = QDateTime::fromTime_t(uint(now)).date();
+    const qint64 day = QDateTime(date).toTime_t();
+    QVariantMap summary;
+    summary.insert(QStringLiteral("timestamp"), now);
+    if (steps >= 0) {
+        summary.insert(QStringLiteral("steps"), steps);
+        if (m_estimateCalories) {
+            const QSettings settings = appSettings();
+            const double weight = qBound(20.0, settings.value(QStringLiteral("profile/weightKg"), 70.0).toDouble(), 300.0);
+            const double height = qBound(80.0, settings.value(QStringLiteral("profile/heightCm"), 170.0).toDouble(), 250.0);
+            summary.insert(QStringLiteral("calories"), qRound(steps * height * 0.00415 * weight * 0.0005));
+        }
+        if (m_estimateActivity) {
+            QSqlQuery previous(m_db);
+            previous.prepare(QStringLiteral("SELECT ts, seen_at, steps, delta, active FROM step_observations WHERE ts>=? ORDER BY ts DESC LIMIT 1"));
+            previous.addBindValue(day);
+            int delta = 0;
+            int active = 0;
+            if (previous.exec() && previous.next()) {
+                const qint64 seen = previous.value(1).toLongLong();
+                if (now >= seen && now - seen <= 90 && steps > previous.value(2).toInt()) {
+                    delta = steps - previous.value(2).toInt();
+                    active = 1;
+                }
+                if (previous.value(0).toLongLong() == now / 60 * 60) {
+                    delta += previous.value(3).toInt();
+                    active = qMax(active, previous.value(4).toInt());
+                }
+            }
+            QSqlQuery q(m_db);
+            q.prepare(QStringLiteral("INSERT OR REPLACE INTO step_observations(ts, seen_at, steps, delta, active) VALUES(?, ?, ?, ?, ?)"));
+            q.addBindValue(now / 60 * 60);
+            q.addBindValue(now);
+            q.addBindValue(steps);
+            q.addBindValue(delta);
+            q.addBindValue(active);
+            if (!q.exec())
+                qWarning() << "Step observation:" << q.lastError().text();
+            q.prepare(QStringLiteral("SELECT COALESCE(SUM(active), 0) FROM step_observations WHERE ts>=? AND ts<?"));
+            q.addBindValue(day);
+            q.addBindValue(QDateTime(date.addDays(1)).toTime_t());
+            if (q.exec() && q.next())
+                summary.insert(QStringLiteral("activityMin"), q.value(0));
+        }
+    }
+    if (heartRate > 0) {
+        QSqlQuery q(m_db);
+        q.prepare(QStringLiteral("INSERT OR REPLACE INTO manual_samples(ts, type, value) VALUES(?, 'hr', ?)"));
+        q.addBindValue(now);
+        q.addBindValue(heartRate);
+        if (!q.exec()) {
+            qWarning() << "Heart rate:" << q.lastError().text();
+            return;
+        }
+        q.prepare(QStringLiteral("SELECT MIN(value), MAX(value), ROUND(AVG(value)) FROM manual_samples WHERE type='hr' AND ts>=? AND ts<?"));
+        q.addBindValue(day);
+        q.addBindValue(QDateTime(date.addDays(1)).toTime_t());
+        if (q.exec() && q.next()) {
+            summary.insert(QStringLiteral("minHr"), q.value(0));
+            summary.insert(QStringLiteral("maxHr"), q.value(1));
+            summary.insert(QStringLiteral("avgHr"), q.value(2));
+        }
+        q.prepare(QStringLiteral("UPDATE minute_samples SET hr=? WHERE ts=?"));
+        q.addBindValue(heartRate);
+        q.addBindValue(now / 60 * 60);
+        if (q.exec() && q.numRowsAffected() == 0) {
+            q.prepare(QStringLiteral("INSERT INTO minute_samples(ts, hr) VALUES(?, ?)"));
+            q.addBindValue(now / 60 * 60);
+            q.addBindValue(heartRate);
+            if (!q.exec())
+                qWarning() << "Heart rate sample:" << q.lastError().text();
+        }
+    }
+    saveDailySummary(summary);
+}
+
+void Storage::setLiveEstimation(bool calories, bool activity)
+{
+    m_estimateCalories = calories;
+    m_estimateActivity = activity;
+    recalculateCalories();
+}
+
+void Storage::recalculateCalories()
+{
+    if (!m_ready || !m_estimateCalories)
+        return;
+    const QSettings settings = appSettings();
+    const double weight = qBound(20.0, settings.value(QStringLiteral("profile/weightKg"), 70.0).toDouble(), 300.0);
+    const double height = qBound(80.0, settings.value(QStringLiteral("profile/heightCm"), 170.0).toDouble(), 250.0);
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("UPDATE daily_summary SET calories=ROUND(steps * ?) WHERE steps IS NOT NULL"));
+    q.addBindValue(height * 0.00415 * weight * 0.0005);
+    if (!q.exec())
+        qWarning() << "Estimated calories:" << q.lastError().text();
+    emit dataChanged();
+}
+
+QVariantList Storage::hourlyActivity()
+{
+    QVariantList out;
+    if (!m_ready || !m_estimateActivity)
+        return out;
+    const qint64 day = QDateTime(QDate::currentDate()).toTime_t();
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("SELECT strftime('%H', ts, 'unixepoch', 'localtime'), SUM(active), SUM(delta) "
+                             "FROM step_observations WHERE ts>=? AND ts<? GROUP BY 1 ORDER BY 1"));
+    q.addBindValue(day);
+    q.addBindValue(QDateTime(QDate::currentDate().addDays(1)).toTime_t());
+    if (!q.exec())
+        return out;
+    while (q.next())
+        out.append(QVariantMap{{QStringLiteral("hour"), q.value(0).toInt()},
+                              {QStringLiteral("activeMin"), q.value(1).toInt()},
+                              {QStringLiteral("steps"), q.value(2).toInt()}});
+    return out;
 }
 
 void Storage::saveDailySummary(const QVariantMap &m)
@@ -342,8 +496,9 @@ QVariantMap Storage::todaySummary()
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("SELECT ts, steps, calories, resting_hr, max_hr, min_hr,"
                              "avg_hr, stress_avg, spo2_avg, activity_min FROM daily_summary"
-                             " WHERE ts >= ? ORDER BY ts DESC LIMIT 1"));
+                             " WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT 1"));
     q.addBindValue(startOfDay.toTime_t());
+    q.addBindValue(QDateTime(QDate::currentDate().addDays(1)).toTime_t());
     if (!q.exec() || !q.next())
         return out;
 

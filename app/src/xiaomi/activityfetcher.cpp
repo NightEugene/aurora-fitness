@@ -234,6 +234,6 @@ void ActivityFetcher::finish()
 {
     m_state = Done;
     m_timeout.stop();
-    emit fetchProgress(QStringLiteral("Синхронизация завершена"));
+    emit fetchProgress(QStringLiteral("Данные обновлены"));
     emit finished();
 }

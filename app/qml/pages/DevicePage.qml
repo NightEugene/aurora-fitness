@@ -67,19 +67,14 @@ Page {
 
             SectionHeader {
                 text: qsTr("Mi Band 8")
-                visible: {
-                    for (var i = 0; i < bluez.services.length; i++)
-                        if (bluez.services[i].uuid === "0000fe95-0000-1000-8000-00805f9b34fb")
-                            return true
-                    return false
-                }
+                visible: bluez.requiresAuth
             }
 
             TextField {
                 id: keyField
                 width: parent.width
-                visible: bluez.connectedAddress.length > 0
-                         && bluez.authStatus !== qsTr("Аутентификация успешна")
+                visible: bluez.requiresAuth && bluez.connectedAddress.length > 0
+                         && !bluez.ready
                 placeholderText: qsTr("Auth key (32 hex-символа)")
                 label: qsTr("Ключ из логов Mi Fitness")
             }
@@ -101,7 +96,7 @@ Page {
                 width: parent.width - 2 * x
                 visible: bluez.authStatus.length > 0
                 text: bluez.authStatus
-                color: bluez.authStatus === qsTr("Аутентификация успешна")
+                color: bluez.ready
                        ? "#4caf50" : Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
                 wrapMode: Text.Wrap
@@ -111,20 +106,20 @@ Page {
 
             Button {
                 anchors.horizontalCenter: parent.horizontalCenter
-                visible: bluez.authStatus === qsTr("Аутентификация успешна")
+                visible: bluez.ready
                 text: qsTr("Синхронизировать данные")
                 onClicked: bluez.syncActivity()
             }
 
             SectionHeader {
                 text: qsTr("Уведомление на браслет")
-                visible: bluez.authStatus === qsTr("Аутентификация успешна")
+                visible: bluez.ready
             }
 
             TextField {
                 id: notifTitle
                 width: parent.width
-                visible: bluez.authStatus === qsTr("Аутентификация успешна")
+                visible: bluez.ready
                 placeholderText: qsTr("Заголовок")
                 label: qsTr("Заголовок")
             }
@@ -132,14 +127,14 @@ Page {
             TextField {
                 id: notifBody
                 width: parent.width
-                visible: bluez.authStatus === qsTr("Аутентификация успешна")
+                visible: bluez.ready
                 placeholderText: qsTr("Текст уведомления")
                 label: qsTr("Текст уведомления")
             }
 
             Button {
                 anchors.horizontalCenter: parent.horizontalCenter
-                visible: bluez.authStatus === qsTr("Аутентификация успешна")
+                visible: bluez.ready
                 enabled: notifTitle.text.length > 0 || notifBody.text.length > 0
                 text: qsTr("Отправить уведомление")
                 onClicked: bluez.sendTestNotification(notifTitle.text, notifBody.text)

@@ -52,7 +52,7 @@ const quint32 CMD_NOTIFICATION_ICON_REQUEST = 15;
 const quint32 CMD_NOTIFICATION_ICON_QUERY = 16;
 }
 
-XiaomiChannel::XiaomiChannel(QObject *parent) : QObject(parent)
+XiaomiChannel::XiaomiChannel(QObject *parent) : WearableChannel(parent)
 {
 }
 
@@ -744,6 +744,7 @@ void XiaomiChannel::handleSystem(const QByteArray &systemMsg)
             const QList<pb::Field> bFields = pb::parse(battery.bytes);
             const int level = int(pb::first(bFields, 1).varint);
             const int state = int(pb::first(bFields, 2).varint);
+            emit readyChanged();
             emit batteryReceived(level, state);
         }
     }

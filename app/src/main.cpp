@@ -12,6 +12,7 @@
 
 #include "bluezmanager.h"
 #include "notificationdaemon.h"
+#include "mprisbridge.h"
 #include "appsettings.h"
 
 namespace {
@@ -77,13 +78,15 @@ int main(int argc, char *argv[])
             if (idx + 2 < cliArgs.size() && !cliArgs.at(idx + 2).startsWith(QLatin1Char('-')))
                 manager.setAuthKey(cliArgs.at(idx + 2));
             if (mac.isEmpty())
-                mac = appSettings().value(QStringLiteral("miband8/lastAddress")).toString();
+                mac = appSettings().value(QStringLiteral("device/lastAddress"), appSettings().value(QStringLiteral("miband8/lastAddress"))).toString();
             if (mac.isEmpty()) {
                 qWarning() << "Использование: --daemon <MAC> [hex-key]"
                               "(либо предварительно подключитесь из GUI / другого CLI-режима)";
-                return 1;
             }
             NotificationDaemon daemon(&manager, mac);
+            MprisRelay media;
+            if (!media.start())
+                qWarning() << "MPRIS relay unavailable";
             if (!daemon.start())
                 return 1;
             return app->exec();
@@ -98,10 +101,12 @@ int main(int argc, char *argv[])
             const QString title = cliArgs.at(idx + 3);
             const QString body = idx + 4 < cliArgs.size() ? cliArgs.at(idx + 4) : QString();
             manager.setAuthKey(cliArgs.at(idx + 2));
-            QObject::connect(&manager, &BluezManager::bandBatteryReceived, app.data(), [&]() {
-                // battery приходит сразу после auth — канал готов
+            bool sent = false;
+            QObject::connect(&manager, &BluezManager::bandReadyChanged, app.data(), [&]() {
+                if (!manager.bandReady() || sent)
+                    return;
+                sent = true;
                 manager.sendTestNotification(title, body);
-                // Даём время на цепочку ICON_QUERY → ICON_REPLY → ICON_REQUEST → upload
                 QTimer::singleShot(15000, app.data(), &QCoreApplication::quit);
             });
             QObject::connect(&manager, &BluezManager::deviceError, app.data(),
@@ -128,9 +133,12 @@ int main(int argc, char *argv[])
                 return 1;
             }
             manager.setAuthKey(cliArgs.at(idx + 2));
-            QObject::connect(&manager, &BluezManager::deviceReady, app.data(), [&]() {
-                // auth стартует автоматически; fetch — после неё
-                QTimer::singleShot(3000, [&]() { manager.syncActivity(); });
+            bool started = false;
+            QObject::connect(&manager, &BluezManager::bandReadyChanged, app.data(), [&]() {
+                if (!manager.bandReady() || started)
+                    return;
+                started = true;
+                manager.syncActivity();
             });
             QObject::connect(&manager, &BluezManager::activitySyncFinished, app.data(), [&]() {
                 qInfo() << "=== SYNC DONE, файлов:" << manager.activityResults().size() << "===";
@@ -225,7 +233,7 @@ int main(int argc, char *argv[])
     // их сюда вызовом forwardNotification (eavesdrop из песочницы GUI
     // недоступен — на сессионной шине сидит xdg-dbus-proxy)
     NotificationDaemon relay(&manager,
-            appSettings().value(QStringLiteral("miband8/lastAddress")).toString());
+            appSettings().value(QStringLiteral("device/lastAddress"), appSettings().value(QStringLiteral("miband8/lastAddress"))).toString());
     relay.setRelayMode(true);
     relay.start();
     // --qml pages/Foo.qml — отладочный запуск с другой стартовой страницей

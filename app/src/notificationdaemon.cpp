@@ -39,8 +39,8 @@ NotificationDaemon::NotificationDaemon(BluezManager *bluez, const QString &mac, 
     m_minuteTimer.setInterval(60000);
     connect(&m_minuteTimer, &QTimer::timeout, this, &NotificationDaemon::onMinuteTick);
 
-    connect(m_bluez, &BluezManager::bandBatteryReceived,
-            this, [this](int, int) { onBandReady(); });
+    connect(m_bluez, &BluezManager::bandReadyChanged,
+            this, [this]() { if (m_bluez->bandReady()) onBandReady(); });
     connect(m_bluez, &BluezManager::deviceError,
             this, &NotificationDaemon::onDeviceError);
     connect(m_bluez, &BluezManager::bandDisconnected,
@@ -126,6 +126,8 @@ bool NotificationDaemon::start()
 
     reloadSettings();
     m_minuteTimer.start();
+    if (m_bandAllowed)
+        ensureBandConnected();
 
     qInfo() << "[daemon] запущен. MAC:" << m_mac
             << "notifyEnabled:" << m_notifyEnabled
@@ -249,6 +251,8 @@ void NotificationDaemon::handleNameSignal(DBusMessage *msg)
 
     qInfo() << "[daemon] имя браслета получено";
     m_bandAllowed = true;
+    reloadSettings();
+    ensureBandConnected();
     if (m_syncPending)
         requestSync();
     flushPendingNotification();
@@ -367,6 +371,8 @@ void NotificationDaemon::requestSync()
 void NotificationDaemon::onMinuteTick()
 {
     reloadSettings();
+    if (m_bandAllowed)
+        ensureBandConnected();
     if (!m_bandAllowed || !m_syncEnabled || m_syncIntervalMin <= 0)
         return;
     const QDateTime now = QDateTime::currentDateTime();
@@ -384,12 +390,19 @@ void NotificationDaemon::reloadSettings()
     const QMap<QString, QString> conf = readConfFile();
     m_notifyEnabled = conf.value(QStringLiteral("daemon/notifyEnabled")) == QLatin1String("true");
     m_syncEnabled = conf.value(QStringLiteral("daemon/syncEnabled")) == QLatin1String("true");
+    const QString address = conf.value(QStringLiteral("device/lastAddress"), conf.value(QStringLiteral("miband8/lastAddress")));
+    if (!address.isEmpty() && address != m_mac) {
+        m_mac = address;
+        m_connecting = false;
+        if (m_bandAllowed)
+            m_bluez->disconnectBand();
+    }
     bool ok = false;
     const int interval = conf.value(QStringLiteral("daemon/syncIntervalMin"),
                                     QStringLiteral("30")).toInt(&ok);
     m_syncIntervalMin = ok ? interval : 30;
     const QDateTime lastSync = QDateTime::fromString(
-                conf.value(QStringLiteral("miband8/lastSyncTime")), Qt::ISODate);
+                conf.value(QStringLiteral("device/lastSyncTime"), conf.value(QStringLiteral("miband8/lastSyncTime"))), Qt::ISODate);
     if (lastSync.isValid())
         m_lastSync = lastSync;
 }

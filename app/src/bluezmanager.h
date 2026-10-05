@@ -12,7 +12,7 @@
 #include "devicesmodel.h"
 #include "storage.h"
 
-class XiaomiChannel;
+class WearableChannel;
 
 typedef QMap<QString, QVariantMap> InterfaceMap;
 typedef QMap<QDBusObjectPath, InterfaceMap> ManagedObjectMap;
@@ -40,6 +40,15 @@ class BluezManager : public QObject
     Q_PROPERTY(int activityGoal READ activityGoal WRITE setActivityGoal NOTIFY activityGoalChanged)
     Q_PROPERTY(QString authStatus READ authStatus NOTIFY authStatusChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool requiresAuth READ requiresAuth NOTIFY servicesChanged)
+    Q_PROPERTY(bool ready READ bandReady NOTIFY bandReadyChanged)
+    Q_PROPERTY(int heartRate READ heartRate NOTIFY bandInfoChanged)
+    Q_PROPERTY(bool supportsSleep READ supportsSleep NOTIFY capabilitiesChanged)
+    Q_PROPERTY(bool supportsStress READ supportsStress NOTIFY capabilitiesChanged)
+    Q_PROPERTY(bool supportsSpO2 READ supportsSpO2 NOTIFY capabilitiesChanged)
+    Q_PROPERTY(bool estimatedActivity READ estimatedActivity NOTIFY capabilitiesChanged)
+    Q_PROPERTY(double weightKg READ weightKg WRITE setWeightKg NOTIFY profileChanged)
+    Q_PROPERTY(int heightCm READ heightCm WRITE setHeightCm NOTIFY profileChanged)
     Q_PROPERTY(QVariantList activityResults READ activityResults NOTIFY activityResultsChanged)
 
 public:
@@ -64,6 +73,17 @@ public:
     void setActivityGoal(int goal);
     QString authStatus() const { return m_authStatus; }
     bool busy() const { return m_busy; }
+    bool requiresAuth() const;
+    int heartRate() const { return m_bandInfo.value(QStringLiteral("heartRate"), -1).toInt(); }
+    bool supportsSleep() const { return m_capabilities.value(QStringLiteral("sleep"), true).toBool(); }
+    bool supportsStress() const { return m_capabilities.value(QStringLiteral("stress"), true).toBool(); }
+    bool supportsSpO2() const { return m_capabilities.value(QStringLiteral("spo2"), true).toBool(); }
+    bool estimatedCalories() const { return !m_capabilities.value(QStringLiteral("nativeCalories"), true).toBool(); }
+    bool estimatedActivity() const { return !m_capabilities.value(QStringLiteral("nativeActivity"), true).toBool(); }
+    double weightKg() const;
+    int heightCm() const;
+    void setWeightKg(double value);
+    void setHeightCm(int value);
 
     Q_INVOKABLE void startScan();
     Q_INVOKABLE void stopScan();
@@ -121,6 +141,9 @@ signals:
     void activityResultsChanged();
     void activitySyncStarted();
     void activitySyncFinished();
+    void bandReadyChanged();
+    void capabilitiesChanged();
+    void profileChanged();
     void bandDisconnected();   // обрыв соединения с браслетом
 
 private slots:
@@ -140,7 +163,7 @@ private:
     void finishConnect();
     void enumerateServices();
     void readBandInfo();
-    void setupXiaomiChannel();
+    void setupWearableChannel();
     QString readStringChar(const QString &charPath);
     void setStatus(const QString &status);
     void setBusy(bool busy);
@@ -166,11 +189,12 @@ private:
     int m_activityGoal = 30;
     QVariantList m_services;
     QVariantMap m_bandInfo;
+    QVariantMap m_capabilities;
     QTimer m_resolveTimer;
     int m_resolveAttempts = 0;
     bool m_cliMode = false;
 
-    XiaomiChannel *m_channel = nullptr;
+    WearableChannel *m_channel = nullptr;
     QString m_authKeyHex;
     QString m_authStatus;
     QVariantList m_activityResults;
