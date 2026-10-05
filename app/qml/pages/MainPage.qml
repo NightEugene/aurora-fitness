@@ -1,21 +1,9 @@
 import QtQuick 2.0
-import QtFeedback 5.0
 import Sailfish.Silica 1.0
 import Aurora.Controls 1.0
 
 Page {
     id: page
-
-    // Виброотклик при pull-to-refresh
-    HapticsEffect {
-        id: refreshBuzz
-        attackIntensity: 0.0
-        fadeIntensity: 0.0
-        attackTime: 30
-        fadeTime: 30
-        intensity: 0.6
-        duration: 70
-    }
 
     property var today: ({})
     property var sleep: []
@@ -373,24 +361,19 @@ Page {
         // overshoot за верхний край нужен всегда, даже когда контент короче вьюпорта
         boundsBehavior: Flickable.DragAndOvershootBounds
 
-        // --- pull-to-refresh: синк при отпускании за порогом overscroll ---
-        property bool pullArmed: false      // драг ушёл за порог
+        // --- pull-to-refresh: нативный жест Aurora.Controls ---
         property bool syncRunning: false    // синк уже идёт — повторы блокируем
-        readonly property bool ready: bluez.ready
-        readonly property bool pullOver: contentY < -Theme.itemSizeLarge
 
-        onContentYChanged: {
-            if (pullOver && ready && !syncRunning)
-                pullArmed = true
-        }
-        onMovementStarted: pullArmed = false
-        onMovementEnded: {
-            if (pullArmed && ready && !syncRunning) {
-                refreshBuzz.start()
-                syncRunning = true
-                bluez.syncActivity()
+        PullToRefresh.refreshHandler: startPullSync
+
+        function startPullSync() {
+            if (!bluez.ready || syncRunning) {
+                // скрыть индикатор без статуса
+                flick.PullToRefresh.refreshCompletedCustom("", "")
+                return
             }
-            pullArmed = false
+            syncRunning = true
+            bluez.syncActivity()
         }
 
         Connections {
@@ -398,8 +381,18 @@ Page {
             // Индикатор крутится при ЛЮБОМ синке: кнопка, pull-to-refresh,
             // автосинк после подключения при старте приложения
             onActivitySyncStarted: flick.syncRunning = true
-            onActivitySyncFinished: flick.syncRunning = false
-            onDeviceError: flick.syncRunning = false
+            onActivitySyncFinished: {
+                if (flick.syncRunning) {
+                    flick.syncRunning = false
+                    flick.PullToRefresh.refreshCompleted()
+                }
+            }
+            onDeviceError: {
+                if (flick.syncRunning) {
+                    flick.syncRunning = false
+                    flick.PullToRefresh.refreshCompleted(false)
+                }
+            }
             onBandReadyChanged: if (!bluez.ready) flick.syncRunning = false
         }
 
