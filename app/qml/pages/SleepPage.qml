@@ -60,6 +60,31 @@ Page {
         return Math.floor(min / 60) + qsTr("ч") + " " + ("0" + (min % 60)).slice(-2) + qsTr("м")
     }
 
+    readonly property var monthNames: [
+        qsTr("января"), qsTr("февраля"), qsTr("марта"), qsTr("апреля"),
+        qsTr("мая"), qsTr("июня"), qsTr("июля"), qsTr("августа"),
+        qsTr("сентября"), qsTr("октября"), qsTr("ноября"), qsTr("декабря")]
+    readonly property var weekdayLetters: [
+        qsTr("П"), qsTr("В"), qsTr("С"), qsTr("Ч"), qsTr("П"), qsTr("С"), qsTr("В")]
+
+    function fmtLongDate(d) {
+        return d.getDate() + " " + monthNames[d.getMonth()] + " " + d.getFullYear() + " г."
+    }
+
+    function sameDay(a, b) {
+        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+                && a.getDate() === b.getDate()
+    }
+
+    // Сессия ночи, датированной днём пробуждения d
+    function sessionForDate(d) {
+        for (var i = 0; i < sessions.length; i++) {
+            if (sameDay(new Date(nightTs(sessions[i]) * 1000), d))
+                return i
+        }
+        return -1
+    }
+
     function fmtDate(ts) {
         var d = new Date(ts * 1000)
         return ("0" + d.getDate()).slice(-2) + "." + ("0" + (d.getMonth() + 1)).slice(-2)
@@ -199,7 +224,9 @@ Page {
                         }
                         Label {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: page.current ? page.fmtDate(page.nightTs(page.current)) : ""
+                            text: page.current
+                                  ? page.fmtLongDate(new Date(page.nightTs(page.current) * 1000))
+                                  : ""
                             color: Theme.primaryColor
                             font.pixelSize: Theme.fontSizeMedium
                             font.bold: true
@@ -258,6 +285,99 @@ Page {
                                 anchors.margins: -Theme.paddingMedium
                                 enabled: page.selected > 0
                                 onClicked: page.selectSession(page.selected - 1)
+                            }
+                        }
+                    }
+
+                    // --- Недельная лента (как в Статистике): мини-кольцо —
+                    // длительность сна относительно 8 ч, тап выбирает ночь ---
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.paddingSmall
+
+                        Repeater {
+                            model: 7
+
+                            delegate: Item {
+                                width: Theme.dp(56)
+                                height: Theme.dp(108)
+
+                                // Понедельник недели текущей ночи + index
+                                property date cellDate: {
+                                    var base = page.current
+                                            ? new Date(page.nightTs(page.current) * 1000)
+                                            : new Date()
+                                    base.setDate(base.getDate() - ((base.getDay() + 6) % 7) + index)
+                                    return base
+                                }
+                                property int cellSession: page.sessionForDate(cellDate)
+                                property bool isSelected: page.current
+                                        && page.sameDay(cellDate,
+                                                        new Date(page.nightTs(page.current) * 1000))
+                                property bool isToday: page.sameDay(cellDate, new Date())
+
+                                onCellSessionChanged: miniRing.requestPaint()
+
+                                Label {
+                                    id: wdLabel
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: page.weekdayLetters[index]
+                                    color: Theme.secondaryColor
+                                    font.pixelSize: Theme.fontSizeExtraSmall
+                                }
+                                Canvas {
+                                    id: miniRing
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: wdLabel.height + Theme.paddingSmall
+                                    width: Theme.dp(40)
+                                    height: width
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        var lw = Theme.dp(4)
+                                        var r = (width - lw) / 2
+                                        var frac = cellSession >= 0
+                                                ? Math.min(1.0, (page.sessions[cellSession].sleepMin || 0) / 480.0)
+                                                : 0
+                                        ctx.strokeStyle = Theme.rgba(page.accentSleep, 0.15)
+                                        ctx.lineWidth = lw
+                                        ctx.beginPath()
+                                        ctx.arc(width / 2, height / 2, r, 0, Math.PI * 2)
+                                        ctx.stroke()
+                                        if (frac > 0) {
+                                            ctx.strokeStyle = page.accentSleep
+                                            ctx.lineCap = "round"
+                                            ctx.beginPath()
+                                            ctx.arc(width / 2, height / 2, r, -Math.PI / 2,
+                                                    -Math.PI / 2 + frac * Math.PI * 2)
+                                            ctx.stroke()
+                                        }
+                                    }
+                                    Component.onCompleted: requestPaint()
+                                }
+                                Label {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: miniRing.y + miniRing.height + Theme.paddingSmall
+                                    text: cellDate.getDate()
+                                    color: isSelected ? Theme.highlightColor
+                                                      : (isToday ? Theme.primaryColor : Theme.secondaryColor)
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.bold: isSelected || isToday
+                                }
+                                Rectangle {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    anchors.bottom: parent.bottom
+                                    width: Theme.dp(24)
+                                    height: Theme.dp(3)
+                                    radius: height / 2
+                                    color: Theme.highlightColor
+                                    visible: isSelected
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: cellSession >= 0
+                                    onClicked: page.selectSession(cellSession)
+                                }
                             }
                         }
                     }
