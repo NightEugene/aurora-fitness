@@ -45,15 +45,56 @@ Page {
 
             Label {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: qsTr("Версия 1.0.0 · Mi Band 8")
+                text: qsTr("Версия 1.1.0")
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeSmall
+            }
+
+            Item { width: 1; height: Theme.paddingSmall }
+
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: qsTr("Поддерживаемые устройства")
+                color: Theme.primaryColor
+                font.pixelSize: Theme.fontSizeSmall
+                font.bold: true
+            }
+
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Mi Band 8 — " + qsTr("полная поддержка")
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
             }
 
             Label {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: qsTr("Автор: Eugene Todoruk (nighteugene)")
+                text: "PineTime (InfiniTime) — " + qsTr("базовая поддержка")
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeSmall
+            }
+
+            Item { width: 1; height: Theme.paddingSmall }
+
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: qsTr("Разработчики")
                 color: Theme.primaryColor
+                font.pixelSize: Theme.fontSizeSmall
+                font.bold: true
+            }
+
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Eugene Todoruk (nighteugene)"
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeSmall
+            }
+
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Pavel Bibichenko (erhoof)"
+                color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
             }
 
