@@ -19,6 +19,7 @@ public:
 
     // Диспетчер по m["kind"]: dailySummary / dailyDetails / sleep / manualSamples
     void saveParsed(const QVariantMap &m);
+    void refresh();
     void saveBattery(int level, int state);
     void selectDevice(const QString &address);
     void saveLiveReading(int steps, int heartRate);

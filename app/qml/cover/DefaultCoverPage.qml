@@ -47,6 +47,22 @@ CoverBackground {
     }
 
     Component.onCompleted: reload()
+    onStatusChanged: {
+        if (status === Cover.Active)
+            reload()
+    }
+    Timer {
+        interval: 60000
+        repeat: true
+        running: cover.status === Cover.Active
+        onTriggered: cover.reload()
+    }
+    Connections {
+        target: bluez
+        onStepsGoalChanged: reload()
+        onCaloriesGoalChanged: reload()
+        onActivityGoalChanged: reload()
+    }
 
     Connections {
         target: storage

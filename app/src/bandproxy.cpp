@@ -4,6 +4,8 @@
 #include "appsettings.h"
 #include "storage.h"
 
+#include <QDBusArgument>
+#include <QDBusVariant>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
@@ -24,6 +26,39 @@ namespace {
 const char BAND_SERVICE[] = "ru.nighteugene.aurorafitness.band";
 const char BAND_PATH[] = "/band";
 const char DAEMON_UNIT[] = "ru.nighteugene.aurorafitness-daemon.service";
+
+// Вложенные контейнеры a{sv}/av приходят как QDBusArgument, включая
+// карты внутри списков сервисов и характеристик.
+QVariant unpackDBus(const QVariant &value)
+{
+    if (value.userType() == qMetaTypeId<QDBusVariant>())
+        return unpackDBus(qvariant_cast<QDBusVariant>(value).variant());
+    if (value.userType() == qMetaTypeId<QDBusArgument>()) {
+        const QDBusArgument arg = qvariant_cast<QDBusArgument>(value);
+        if (arg.currentType() == QDBusArgument::MapType)
+            return unpackDBus(qdbus_cast<QVariantMap>(arg));
+        if (arg.currentType() == QDBusArgument::ArrayType) {
+            if (arg.currentSignature() == QStringLiteral("as"))
+                return qdbus_cast<QStringList>(arg);
+            return unpackDBus(qdbus_cast<QVariantList>(arg));
+        }
+        return value;
+    }
+    if (value.type() == QVariant::Map) {
+        QVariantMap map = value.toMap();
+        for (auto it = map.begin(); it != map.end(); ++it)
+            it.value() = unpackDBus(it.value());
+        return map;
+    }
+    if (value.type() == QVariant::List) {
+        QVariantList list = value.toList();
+        for (QVariant &item : list)
+            item = unpackDBus(item);
+        return list;
+    }
+    return value;
+}
+
 
 const QStringList &cardIds()
 {
@@ -115,6 +150,7 @@ void BandProxy::onGetStateFinished(QDBusPendingCallWatcher *watcher)
 
 void BandProxy::onServiceRegistered()
 {
+    m_haveDataRevision = false;
     refreshState();
 }
 
@@ -147,8 +183,9 @@ void BandProxy::setOffline(const QString &reason)
     }
 }
 
-void BandProxy::onStateChanged(const QVariantMap &s)
+void BandProxy::onStateChanged(const QVariantMap &state)
 {
+    const QVariantMap s = unpackDBus(state).toMap();
     const bool scanning = s.value(QStringLiteral("scanning")).toBool();
     if (m_scanning != scanning) {
         m_scanning = scanning;
@@ -229,6 +266,15 @@ void BandProxy::onStateChanged(const QVariantMap &s)
         emit activityResultsChanged();
     } else {
         m_activityResults = results;
+    }
+    // Сначала обновляем свойства прокси: обработчики dataChanged в QML
+    // строят карточки в том числе из bandInfo и capabilities.
+    const qulonglong revision = s.value(QStringLiteral("dataRevision")).toULongLong();
+    if (!m_haveDataRevision || revision != m_dataRevision) {
+        m_haveDataRevision = true;
+        m_dataRevision = revision;
+        if (m_storage)
+            m_storage->refresh();
     }
 }
 

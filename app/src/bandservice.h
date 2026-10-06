@@ -52,6 +52,7 @@ private:
 
     BluezManager *m_bluez;
     bool m_emitScheduled = false;
+    qulonglong m_dataRevision = 0;
 };
 
 #endif // BANDSERVICE_H

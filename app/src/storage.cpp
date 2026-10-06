@@ -37,6 +37,16 @@ Storage::Storage(QObject *parent) : QObject(parent)
     m_ready = open();
 }
 
+void Storage::refresh()
+{
+    const QSettings settings = appSettings();
+    const QVariantMap capabilities = settings.value(QStringLiteral("device/capabilities")).toMap();
+    m_estimateCalories = !capabilities.value(QStringLiteral("nativeCalories"), true).toBool();
+    m_estimateActivity = !capabilities.value(QStringLiteral("nativeActivity"), true).toBool();
+    selectDevice(settings.value(QStringLiteral("device/storageId")).toString());
+    emit dataChanged();
+}
+
 Storage::~Storage()
 {
     const QString connection = m_db.connectionName();

@@ -109,10 +109,10 @@ private:
     class ActivityFetcher *m_fetcher = nullptr;
     class DataUpload *m_uploader = nullptr;
     QString m_iconPackage;
-    // Учёт слотов иконок браслета (~6, дедупа нет): грузим один размер на
-    // пакет; served — успешно загруженные, uploading — идущая сейчас загрузка
+    // Учёт загрузок по package:size; одновременно передаём одну иконку.
     QSet<QString> m_iconServed;
     QString m_iconUploading;
+    int m_iconUploadingSize = 0;
     QByteArray m_authKey;
     State m_state = State::Idle;
     bool m_authed = false;

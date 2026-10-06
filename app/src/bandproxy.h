@@ -142,6 +142,8 @@ private:
     void setLocalStatus(const QString &text);
 
     Storage *m_storage;
+    qulonglong m_dataRevision = 0;
+    bool m_haveDataRevision = false;
     QDBusServiceWatcher *m_watcher = nullptr;
 
     // Зеркало состояния демона

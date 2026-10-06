@@ -243,6 +243,7 @@ Page {
 
     Connections {
         target: bluez
+        onBandInfoChanged: cardsRepeater.model = page.cardModel()
         onViewConfigChanged: cardsRepeater.model = page.cardModel()
         onCapabilitiesChanged: cardsRepeater.model = page.cardModel()
     }

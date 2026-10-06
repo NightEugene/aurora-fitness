@@ -75,7 +75,8 @@ void XiaomiChannel::setup(const QString &readCharPath, const QString &writeCharP
             // (нет слотов) дадим повторить попытку на следующее уведомление
             if (!m_iconUploading.isEmpty()) {
                 if (success)
-                    m_iconServed.insert(m_iconUploading);
+                    m_iconServed.insert(m_iconUploading + QStringLiteral(":")
+                                        + QString::number(m_iconUploadingSize));
                 m_iconUploading.clear();
             }
         });
@@ -610,11 +611,10 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
     if (status != 0)
         return;
 
-    // Хранилище иконок браслета ~6 слотов (чистится ребутом), дедупа по md5
-    // нет — каждая загрузка ест слот, даже повторная. Поэтому грузим ОДИН
-    // размер на пакет (браслет просит 28/44/80 — первый запрошенный),
-    // 80px (25 КБ) не грузим никогда. Пропускать всё нельзя: без иконки
-    // браслет переспрашивает её на каждое уведомление.
+    // Хранилище иконок браслета ограничено, дедупа по md5 нет — каждая
+    // загрузка ест слот. Проверяем запросы 28 и 44: после успешных 28px
+    // браслет продолжает просить 44px, а иконка не отображается. Грузим
+    // каждый из размеров 28/44 один раз за сессию, 80px (25 КБ) — никогда.
     if (size > 44) {
         qInfo() << "XiaomiChannel: пропускаю размер иконки" << size << "(слишком большой)";
         return;
@@ -623,8 +623,9 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
         qInfo() << "XiaomiChannel: иконка" << m_iconUploading << "ещё грузится — пропуск";
         return;
     }
-    if (m_iconServed.contains(m_iconPackage)) {
-        qInfo() << "XiaomiChannel: иконка" << m_iconPackage << "уже загружена — пропуск";
+    const QString servedKey = m_iconPackage + QStringLiteral(":") + QString::number(size);
+    if (m_iconServed.contains(servedKey)) {
+        qInfo() << "XiaomiChannel: иконка" << servedKey << "уже загружена — пропуск";
         return;
     }
 
@@ -638,6 +639,7 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
         return;
 
     m_iconUploading = m_iconPackage; // переносится в m_iconServed по uploadFinished
+    m_iconUploadingSize = int(size);
     m_uploader->startUpload(DataUpload::TYPE_NOTIFICATION_ICON, bitmap);
 }
 

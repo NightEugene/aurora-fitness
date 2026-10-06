@@ -15,6 +15,10 @@ const char BAND_PATH[] = "/band";
 BandService::BandService(BluezManager *bluez, QObject *parent)
     : QObject(parent), m_bluez(bluez)
 {
+    connect(m_bluez->storage(), &Storage::dataChanged, this, [this]() {
+        ++m_dataRevision;
+        scheduleStateEmit();
+    });
     // Любое изменение состояния браслета — отложенная (со схлопыванием)
     // рассылка снапшота stateChanged
     connect(m_bluez, &BluezManager::scanningChanged, this, &BandService::scheduleStateEmit);
@@ -66,6 +70,7 @@ bool BandService::start()
 QVariantMap BandService::collectState() const
 {
     QVariantMap s;
+    s.insert(QStringLiteral("dataRevision"), m_dataRevision);
     s.insert(QStringLiteral("scanning"), m_bluez->scanning());
     s.insert(QStringLiteral("adapterPowered"), m_bluez->adapterPowered());
     s.insert(QStringLiteral("status"), m_bluez->status());

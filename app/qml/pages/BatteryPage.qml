@@ -227,11 +227,12 @@ Page {
                             var marks = [0, 0.5, 1]
                             for (var i = 0; i < marks.length; i++) {
                                 var d = new Date((t0 + (t1 - t0) * marks[i]) * 1000)
+                                var dateLabel = ("0" + d.getDate()).slice(-2) + "."
+                                                + ("0" + (d.getMonth() + 1)).slice(-2)
+                                var halfLabel = ctx.measureText(dateLabel).width / 2
                                 var tx = labelW + chartW * marks[i]
-                                tx = Math.max(labelW + 14, Math.min(width - 14, tx))
-                                ctx.fillText(("0" + d.getDate()).slice(-2) + "."
-                                             + ("0" + (d.getMonth() + 1)).slice(-2),
-                                             tx, height)
+                                tx = Math.max(halfLabel, Math.min(width - halfLabel, tx))
+                                ctx.fillText(dateLabel, tx, height)
                             }
 
                             // Линия уровня

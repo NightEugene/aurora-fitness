@@ -14,8 +14,8 @@ cd "$(dirname "$0")"
 DEVICE=${DEVICE:-defaultuser@192.168.2.15}
 
 NAME=ru.nighteugene.aurorafitness
-VERSION=1.0.0
-RELEASE=1
+VERSION=$(awk '/^Version:/ {print $2}' "rpm/$NAME.spec")
+RELEASE=$(awk '/^Release:/ {print $2}' "rpm/$NAME.spec")
 SDK="$HOME/.local/share/aurora-sdk/sdk/5.2.1.200"
 export WORKSPACE_DIR="$PWD"
 
