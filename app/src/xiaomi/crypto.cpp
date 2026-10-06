@@ -10,8 +10,11 @@ namespace xcrypto {
 
 QByteArray randomBytes(int n)
 {
+    if (n <= 0)
+        return QByteArray();
     QByteArray out(n, 0);
-    RAND_bytes(reinterpret_cast<uchar *>(out.data()), n);
+    if (RAND_bytes(reinterpret_cast<uchar *>(out.data()), n) != 1)
+        return QByteArray();
     return out;
 }
 
@@ -29,6 +32,8 @@ QByteArray hmacSha256(const QByteArray &key, const QByteArray &msg)
 
 QByteArray aesCcmEncrypt(const QByteArray &key, const QByteArray &nonce, const QByteArray &plain)
 {
+    if (key.size() != 16 || nonce.size() < 7 || nonce.size() > 13)
+        return QByteArray();
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (!ctx)
         return QByteArray();
@@ -60,6 +65,8 @@ QByteArray aesCcmDecrypt(const QByteArray &key, const QByteArray &nonce, const Q
         return QByteArray();
 
     const int cipherLen = cipherTag.size() - 4;
+    if (key.size() != 16 || nonce.size() < 7 || nonce.size() > 13)
+        return QByteArray();
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (!ctx)
         return QByteArray();

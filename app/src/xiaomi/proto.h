@@ -40,7 +40,7 @@ public:
     void boolean(int field, bool v) { varint(field, v ? 1 : 0); }
     void sint32(int field, qint32 v)
     {
-        varint(field, static_cast<quint32>((v << 1) ^ (v >> 31)));
+        varint(field, (quint32(v) << 1) ^ (v < 0 ? quint32(-1) : quint32(0)));
     }
     void bytes(int field, const QByteArray &b)
     {
@@ -67,47 +67,51 @@ inline QList<Field> parse(const QByteArray &data)
     const int n = data.size();
     const uchar *p = reinterpret_cast<const uchar *>(data.constData());
 
-    auto readVarint = [&]() -> quint64 {
-        quint64 v = 0;
-        int shift = 0;
-        while (pos < n && shift < 70) {
-            uchar b = p[pos++];
+    auto readVarint = [&](quint64 &v) -> bool {
+        v = 0;
+        for (int shift = 0; shift <= 63 && pos < n; shift += 7) {
+            const uchar b = p[pos++];
+            // Десятый байт u64 содержит только один значащий бит.
+            if (shift == 63 && b > 1)
+                return false;
             v |= quint64(b & 0x7f) << shift;
             if (!(b & 0x80))
-                break;
-            shift += 7;
+                return true;
         }
-        return v;
+        return false;
     };
 
     while (pos < n) {
-        quint64 t = readVarint();
+        quint64 t = 0;
+        if (!readVarint(t) || (t >> 3) == 0 || (t >> 3) > 0x1fffffff)
+            return QList<Field>();
         Field f;
         f.number = static_cast<int>(t >> 3);
         f.wireType = static_cast<int>(t & 7);
         switch (f.wireType) {
         case 0:
-            f.varint = readVarint();
+            if (!readVarint(f.varint)) return QList<Field>();
             break;
         case 1:
-            if (pos + 8 > n) return out;
+            if (n - pos < 8) return QList<Field>();
             f.bytes = data.mid(pos, 8);
             pos += 8;
             break;
         case 2: {
-            quint64 len = readVarint();
-            if (pos + int(len) > n) return out;
+            quint64 len = 0;
+            if (!readVarint(len) || len > quint64(n - pos))
+                return QList<Field>();
             f.bytes = data.mid(pos, int(len));
             pos += int(len);
             break;
         }
         case 5:
-            if (pos + 4 > n) return out;
+            if (n - pos < 4) return QList<Field>();
             f.bytes = data.mid(pos, 4);
             pos += 4;
             break;
         default:
-            return out; // неизвестный wire type — стоп
+            return QList<Field>();
         }
         out.append(f);
     }

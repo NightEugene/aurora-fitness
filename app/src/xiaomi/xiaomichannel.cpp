@@ -127,6 +127,7 @@ void XiaomiChannel::pumpWriteQueue()
                                             QVariant::fromValue(w.value),
                                             QVariant::fromValue(options));
     QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(call, this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, chrc, &QObject::deleteLater);
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
             [this](QDBusPendingCallWatcher *wt) {
         wt->deleteLater();
@@ -198,6 +199,10 @@ static QByteArray buildCommand(quint32 type, quint32 subtype, int bodyField, con
 void XiaomiChannel::sendAppNonce()
 {
     m_phoneNonce = xcrypto::randomBytes(16);
+    if (m_phoneNonce.size() != 16) {
+        emit authFailed(QStringLiteral("Не удалось создать nonce аутентификации"));
+        return;
+    }
 
     pb::Writer appVerify;
     appVerify.bytes(1, m_phoneNonce);      // AppVerify.nonce
@@ -254,6 +259,8 @@ void XiaomiChannel::deriveKeys()
 QByteArray XiaomiChannel::makeNonce(const QByteArray &nonce4, quint32 counter)
 {
     QByteArray nonce(12, 0);
+    if (nonce4.size() != 4)
+        return QByteArray();
     memcpy(nonce.data(), nonce4.constData(), 4);
     nonce[8] = char(counter & 0xff);
     nonce[9] = char((counter >> 8) & 0xff);
@@ -305,6 +312,10 @@ void XiaomiChannel::sendEncryptedCommand(const QByteArray &proto)
     const QByteArray cipherTag = xcrypto::aesCcmEncrypt(
                 m_encryptionKey, makeNonce(m_encryptionNonce4, counter), proto);
 
+    if (cipherTag.isEmpty()) {
+        emit error(QStringLiteral("Не удалось зашифровать команду"));
+        return;
+    }
     QByteArray frame;
     frame.append("\x00\x00\x02\x01", 4); // одиночная зашифрованная команда
     frame.append(char(counter & 0xff));
@@ -649,6 +660,8 @@ void XiaomiChannel::handleNotificationIconRequest(const QByteArray &iconRequestP
 // Своя иконка подставляется только для своего пакета — она лежит в hicolor.
 QStringList XiaomiChannel::iconCandidatePaths(const QString &pkg)
 {
+    if (!safeIconPackage(pkg))
+        return QStringList();
     QStringList out;
     QString themeIcon;
     if (pkg == QLatin1String("__system")) {
@@ -689,6 +702,8 @@ QStringList XiaomiChannel::iconCandidatePaths(const QString &pkg)
 
 QString XiaomiChannel::findIconPath(const QString &pkg) const
 {
+    if (!safeIconPackage(pkg))
+        return QString();
     // Сначала кэш в общем конфиг-каталоге (его демон наполняет вне песочницы,
     // GUI-relay читает только оттуда), затем системные пути
     const QString cached = appConfigDir() + QStringLiteral("/icons/") + pkg

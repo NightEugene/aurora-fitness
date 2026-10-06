@@ -418,7 +418,7 @@ QMap<QString, QString> NotificationDaemon::readConfFile() const
 
 void NotificationDaemon::cacheIcon(const QString &package) const
 {
-    if (package.isEmpty())
+    if (!safeIconPackage(package))
         return;
     // package — desktop-id или маркер (__system/__unknown): безопасное имя файла
     const QString dir = appConfigDir() + QStringLiteral("/icons");
@@ -439,7 +439,7 @@ void NotificationDaemon::cacheIcon(const QString &package) const
 QString NotificationDaemon::resolveAppPackage(const QString &appName,
                                               const QString &hintId) const
 {
-    if (!hintId.isEmpty())
+    if (safeIconPackage(hintId))
         return hintId;
 
     const QString lower = appName.toLower();

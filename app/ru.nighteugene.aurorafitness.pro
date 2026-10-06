@@ -52,8 +52,8 @@ INCLUDEPATH += /usr/include/dbus-1.0 /usr/lib/dbus-1.0/include
 LIBS += -ldbus-1
 
 # systemd user-юнит демона (валидатор regular-профиля запрещает установку
-# в /usr/lib/systemd/user — кладём в данные приложения, GUI копирует его в
-# ~/.config/systemd/user при включении переключателя)
+# в /usr/lib/systemd/user — кладём в данные приложения; установку в
+# ~/.config/systemd/user выполняют вручную вне песочницы, см. README)
 daemon_unit.files = ru.nighteugene.aurorafitness-daemon.service
 daemon_unit.path = /usr/share/ru.nighteugene.aurorafitness
 INSTALLS += daemon_unit
@@ -61,6 +61,7 @@ INSTALLS += daemon_unit
 AURORAAPP_ICONS = 86x86 108x108 128x128 172x172
 
 DISTFILES += \
+    qml/ProgressMarkers.js \
     qml/AuroraFitness.qml \
     qml/pages/AboutPage.qml \
     qml/pages/MainPage.qml \

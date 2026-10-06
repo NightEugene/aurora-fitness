@@ -201,7 +201,13 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   Так обложка/карточки обновляются при фоновом синке и чтении батареи.
 - GUI: `app/src/bandproxy.*` — context property `bluez` с теми же
   именами property/методов/сигналов, что BluezManager. Локально (без шины):
-  цели, профиль, вид карточек, свитчи демона (appSettings). По шине — всё
+  цели, профиль, вид карточек, свитчи демона (appSettings). Переключатели
+  notify/sync не останавливают службу: демон нужен GUI независимо от них.
+  После сохранения свитча вызывается getState (invoked → reloadSettings).
+  Цели на ползунках сохраняются после отпускания; изменение цели обновляет
+  графику без перечитывания SQLite. Маркеры переполнения — полукруги из
+  qml/ProgressMarkers.js, каждый ориентирован по касательной к кольцу.
+  По шине — всё
   BLE-состояние и действия. Вложенные QVariantMap/List из D-Bus нужно
   рекурсивно распаковывать из QDBusArgument/QDBusVariant: toMap()/toList()
   напрямую дают пустые контейнеры (батарея/прошивка/сервисы пропадали).
@@ -228,7 +234,7 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 - `app/src/xiaomi/`: proto.h (мини-proto2), crypto.cpp (OpenSSL CCM/HMAC),
   xiaomichannel.* (транспорт+auth+уведомления+иконки), activityfetcher.*,
   activityparser.*, dataupload.*.
-- `app/src/storage.*` — SQLite (4 таблицы).
+- `app/src/storage.*` — SQLite (7 таблиц; отдельная БД на устройство).
 - `app/src/notificationdaemon.*` — демон: перехват уведомлений (eavesdrop),
   автосинк, арбитраж имени браслета.
 - QML: `MainPage` (статистика: кольцо шагов, карточки 2×3, график 7 дней,

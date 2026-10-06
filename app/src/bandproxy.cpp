@@ -399,29 +399,12 @@ void BandProxy::setDaemonEnabled(bool enabled)
     QSettings settings = appSettings();
     settings.setValue(QStringLiteral("daemon/notifyEnabled"), enabled);
 
-    const QString name = QString::fromLatin1(DAEMON_UNIT);
-    const QString src = QStringLiteral("/usr/share/ru.nighteugene.aurorafitness/") + name;
-    const QString dirPath = QDir::homePath() + QStringLiteral("/.config/systemd/user");
-    const QString dst = dirPath + QLatin1Char('/') + name;
-
-    if (enabled) {
-        QDir().mkpath(dirPath);
-        QFile::remove(dst);
-        if (!QFile::copy(src, dst)) {
-            setLocalStatus(tr("Настройка сохранена. Служба не установлена (песочница): выполните в терминале: cp %1 %2 && systemctl --user enable --now %3")
-                           .arg(src, dst, name));
-            return;
-        }
-        QProcess::execute(QStringLiteral("systemctl"),
-                          {QStringLiteral("--user"), QStringLiteral("daemon-reload")});
-    }
-    const int rc = QProcess::execute(QStringLiteral("systemctl"),
-                                     {QStringLiteral("--user"),
-                                      enabled ? QStringLiteral("enable") : QStringLiteral("disable"),
-                                      QStringLiteral("--now"), name});
-    setLocalStatus(enabled ? (rc == 0 ? tr("Демон уведомлений включён")
-                                      : tr("Настройка сохранена, но systemctl не отработал (rc=%1)").arg(rc))
-                           : tr("Демон уведомлений выключен"));
+    settings.sync();
+    // Служба обслуживает GUI/BLE независимо от пересылки уведомлений.
+    // Не выключаем её и не перезаписываем юнит из песочницы.
+    callDaemon(QStringLiteral("getState")); // invoked -> reloadSettings демона
+    setLocalStatus(enabled ? tr("Пересылка уведомлений включена")
+                           : tr("Пересылка уведомлений выключена"));
 }
 
 bool BandProxy::daemonEnabled() const
@@ -436,6 +419,8 @@ void BandProxy::setDaemonSyncEnabled(bool enabled)
     settings.setValue(QStringLiteral("daemon/syncEnabled"), enabled);
     if (enabled && settings.value(QStringLiteral("daemon/syncIntervalMin"), 0).toInt() <= 0)
         settings.setValue(QStringLiteral("daemon/syncIntervalMin"), 30);
+    settings.sync();
+    callDaemon(QStringLiteral("getState"));
 }
 
 bool BandProxy::daemonSyncEnabled() const

@@ -76,6 +76,7 @@ void DataUpload::startUpload(quint8 type, const QByteArray &bytes)
         return;
     }
 
+    m_chunkSize = 2048;
     m_type = type;
     m_bytes = bytes;
     m_md5 = QCryptographicHash::hash(bytes, QCryptographicHash::Md5);
@@ -109,8 +110,12 @@ void DataUpload::handleCommand(quint32 subtype, const QByteArray &dataUploadProt
     }
 
     const QList<pb::Field> ackFields = pb::parse(ack.bytes);
+    if (ackFields.isEmpty()) {
+        finish(false, QStringLiteral("повреждённый dataUploadAck"));
+        return;
+    }
     const QByteArray ackMd5 = pb::first(ackFields, F_ACK_MD5).bytes;
-    const quint32 errNo = quint32(pb::first(ackFields, F_ACK_ERRNO).varint);
+    const quint64 errNo = pb::first(ackFields, F_ACK_ERRNO).varint;
     const quint32 resumePosition = quint32(pb::first(ackFields, F_ACK_RESUME_POSITION).varint);
     const pb::Field chunkSizeField = pb::first(ackFields, F_ACK_CHUNK_SIZE);
 
@@ -118,9 +123,8 @@ void DataUpload::handleCommand(quint32 subtype, const QByteArray &dataUploadProt
             << "chunkSize" << chunkSizeField.varint << "md5" << ackMd5.toHex();
 
     if (errNo != 0) {
-        // Браслет отклонил загрузку. Примечание: на Mi Band 8 (fw 2.3.14) это
-        // типичный ответ для иконок сторонних приложений — официальный клиент
-        // получает такой же errno=1 и считает задачу завершённой без загрузки.
+        // errno=1 наблюдался при заполненном хранилище иконок браслета;
+        // загрузка не состоялась, пакет не помечаем обслуженным.
         qInfo() << "DataUpload: браслет отклонил загрузку типа" << m_type
                 << "(errno" << errNo << ")";
         m_timeout.stop();
@@ -130,13 +134,27 @@ void DataUpload::handleCommand(quint32 subtype, const QByteArray &dataUploadProt
         return;
     }
 
-    if (chunkSizeField.varint > 0)
+    if (chunkSizeField.varint > 0) {
+        if (chunkSizeField.varint <= 4 || chunkSizeField.varint > 65535) {
+            finish(false, QStringLiteral("некорректный chunkSize"));
+            return;
+        }
         m_chunkSize = quint32(chunkSizeField.varint);
+    }
+    if (pb::first(ackFields, F_ACK_RESUME_POSITION).varint > quint64(m_bytes.size())
+            || (!ackMd5.isEmpty() && ackMd5 != m_md5)) {
+        finish(false, QStringLiteral("неверный resumePosition или md5"));
+        return;
+    }
 
     buildPayload(resumePosition);
 
     const int partSize = int(m_chunkSize) - 4; // 4 байта заголовка в каждой части
     m_totalParts = (m_payload.size() + partSize - 1) / partSize;
+    if (m_totalParts > 65535) {
+        finish(false, QStringLiteral("слишком много частей"));
+        return;
+    }
     m_currentPart = 0;
     qInfo() << "DataUpload: payload" << m_payload.size() << "байт,"
             << m_totalParts << "частей по" << partSize;

@@ -15,6 +15,14 @@
 // и /srv/shared/<org>/<app>/, а «dotted»-каталог переживает переустановку.
 // QSettings() по умолчанию в песочнице резолвится в затираемый
 // ~/.config/<org>/<app>/ — поэтому путь задан явно.
+// Идентификатор пакета используется как компонент пути к иконке.
+inline bool safeIconPackage(const QString &package)
+{
+    return !package.isEmpty() && package != QLatin1String(".")
+            && package != QLatin1String("..") && !package.contains(QLatin1Char('/'))
+            && !package.contains(QLatin1Char('\\')) && !package.contains(QChar(0));
+}
+
 inline QString appConfigDir()
 {
     return QDir::homePath() + QStringLiteral("/.config/ru.nighteugene.aurorafitness");

@@ -644,6 +644,7 @@ void BluezManager::notifyGoalsAchieved()
         return;
 
     QSettings settings = appSettings();
+    settings.sync(); // цели меняет отдельный GUI-процесс
     const QString today = QDate::currentDate().toString(Qt::ISODate);
     QString rec = settings.value(QStringLiteral("goals/notified")).toString();
     if (rec.section(QLatin1Char(':'), 0, 0) != today)
@@ -653,11 +654,11 @@ void BluezManager::notifyGoalsAchieved()
 
     struct Check { QString key; QString id; int goal; QString text; };
     const QList<Check> checks = {
-        {QStringLiteral("steps"), QStringLiteral("steps"), m_stepsGoal,
+        {QStringLiteral("steps"), QStringLiteral("steps"), settings.value(QStringLiteral("stepsGoal"), 10000).toInt(),
          QStringLiteral("%1 шагов")},
-        {QStringLiteral("calories"), QStringLiteral("kcal"), m_caloriesGoal,
+        {QStringLiteral("calories"), QStringLiteral("kcal"), settings.value(QStringLiteral("ui/caloriesGoal"), 500).toInt(),
          QStringLiteral("%1 ккал")},
-        {QStringLiteral("activityMin"), QStringLiteral("activity"), m_activityGoal,
+        {QStringLiteral("activityMin"), QStringLiteral("activity"), settings.value(QStringLiteral("ui/activityGoal"), 30).toInt(),
          QStringLiteral("%1 мин активности")},
     };
     for (const Check &c : checks) {
