@@ -35,11 +35,24 @@ Page {
             valueText: value
 
             // Защита от рекурсии при синхронизации ползунка извне
-            property bool syncGuard: false
+            property bool syncGuard: true
 
-            Component.onCompleted: value = Math.max(minimumValue,
+            Component.onCompleted: {
+                value = Math.max(minimumValue,
                                                     Math.min(maximumValue, bluez.stepsGoal))
-            onValueChanged: if (!syncGuard) bluez.stepsGoal = value
+                syncGuard = false
+            }
+            // При перетаскивании меняется только локальное значение.
+            // Нулевой таймер сохраняет окончательное значение после release/cancel.
+            onValueChanged: if (!syncGuard && !down) stepsCommit.restart()
+            onDownChanged: if (!syncGuard && !down) stepsCommit.restart()
+
+            Timer {
+                id: stepsCommit
+                interval: 0
+                onTriggered: if (!stepsSlider.down)
+                    bluez.stepsGoal = stepsSlider.value
+            }
 
             Connections {
                 target: bluez
@@ -96,11 +109,24 @@ Page {
             label: qsTr("Цель по калориям в день")
             valueText: value
 
-            property bool syncGuard: false
+            property bool syncGuard: true
 
-            Component.onCompleted: value = Math.max(minimumValue,
+            Component.onCompleted: {
+                value = Math.max(minimumValue,
                                                     Math.min(maximumValue, bluez.caloriesGoal))
-            onValueChanged: if (!syncGuard) bluez.caloriesGoal = value
+                syncGuard = false
+            }
+            // При перетаскивании меняется только локальное значение.
+            // Нулевой таймер сохраняет окончательное значение после release/cancel.
+            onValueChanged: if (!syncGuard && !down) caloriesCommit.restart()
+            onDownChanged: if (!syncGuard && !down) caloriesCommit.restart()
+
+            Timer {
+                id: caloriesCommit
+                interval: 0
+                onTriggered: if (!caloriesSlider.down)
+                    bluez.caloriesGoal = caloriesSlider.value
+            }
 
             Connections {
                 target: bluez
@@ -157,10 +183,23 @@ Page {
             label: qsTr("Цель по времени активности в день")
             valueText: value
 
-            property bool syncGuard: false
+            property bool syncGuard: true
 
-            Component.onCompleted: value = bluez.activityGoal
-            onValueChanged: if (!syncGuard) bluez.activityGoal = value
+            Component.onCompleted: {
+                value = bluez.activityGoal
+                syncGuard = false
+            }
+            // При перетаскивании меняется только локальное значение.
+            // Нулевой таймер сохраняет окончательное значение после release/cancel.
+            onValueChanged: if (!syncGuard && !down) activityCommit.restart()
+            onDownChanged: if (!syncGuard && !down) activityCommit.restart()
+
+            Timer {
+                id: activityCommit
+                interval: 0
+                onTriggered: if (!activitySlider.down)
+                    bluez.activityGoal = activitySlider.value
+            }
 
             Connections {
                 target: bluez

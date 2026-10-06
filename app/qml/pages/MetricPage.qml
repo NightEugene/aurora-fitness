@@ -1,6 +1,7 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
 import Aurora.Controls 1.0
+import "../ProgressMarkers.js" as ProgressMarkers
 
 // Универсальная страница метрики: Калории / Активность / Пульс / Стресс / SpO2.
 // Параметры: metricTitle, accent, unit, field (поле дневной сводки),
@@ -399,20 +400,7 @@ Page {
                                 var lap = parent.lap
                                 if (lap.laps < 1)
                                     return
-                                var cx = lap.over * width
-                                var cy = height / 2
-                                var s = height * 0.35
-                                ctx.strokeStyle = "black"
-                                ctx.lineWidth = Math.max(1.5, height * 0.18)
-                                ctx.lineCap = "round"
-                                for (var k = 0; k < lap.laps; k++) {
-                                    var bx = cx - k * s * 1.6
-                                    ctx.beginPath()
-                                    ctx.moveTo(bx - s, cy - s)
-                                    ctx.lineTo(bx + s, cy)
-                                    ctx.lineTo(bx - s, cy + s)
-                                    ctx.stroke()
-                                }
+                                ProgressMarkers.drawBar(ctx, width, height, lap.laps, lap.over)
                             }
                             Component.onCompleted: requestPaint()
                         }

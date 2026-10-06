@@ -1,5 +1,6 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import "../ProgressMarkers.js" as ProgressMarkers
 
 CoverBackground {
     id: cover
@@ -17,7 +18,7 @@ CoverBackground {
     }
 
     // Переполнение цели: полоска остаётся полной и своего цвета, число
-    // полных «кругов» — чёрными шевронами ">" на позиции текущего круга.
+    // полных «кругов» — чёрными полукругами на позиции текущего круга.
     function lapInfo(value, goal) {
         if (value === undefined || goal <= 0)
             return { fill: 0.0, laps: 0, over: 0.0 }
@@ -26,24 +27,6 @@ CoverBackground {
         if (laps < 1)
             return { fill: ov, laps: 0, over: 0.0 }
         return { fill: 1.0, laps: laps, over: ov - laps }
-    }
-
-    // Шевроны ">" по направлению полоски (вправо), cx — позиция текущего круга
-    function drawBarChevrons(ctx, w, h, laps, overFrac) {
-        var cx = overFrac * w
-        var cy = h / 2
-        var s = h * 0.35
-        ctx.strokeStyle = "black"
-        ctx.lineWidth = Math.max(1.5, h * 0.18)
-        ctx.lineCap = "round"
-        for (var k = 0; k < laps; k++) {
-            var bx = cx - k * s * 1.6
-            ctx.beginPath()
-            ctx.moveTo(bx - s, cy - s)
-            ctx.lineTo(bx + s, cy)
-            ctx.lineTo(bx - s, cy + s)
-            ctx.stroke()
-        }
     }
 
     Component.onCompleted: reload()
@@ -59,9 +42,9 @@ CoverBackground {
     }
     Connections {
         target: bluez
-        onStepsGoalChanged: reload()
-        onCaloriesGoalChanged: reload()
-        onActivityGoalChanged: reload()
+        onStepsGoalChanged: stepsChev.requestPaint()
+        onCaloriesGoalChanged: kcalChev.requestPaint()
+        onActivityGoalChanged: actChev.requestPaint()
     }
 
     Connections {
@@ -117,7 +100,7 @@ CoverBackground {
                         ctx.clearRect(0, 0, width, height)
                         var lap = parent.parent.lap
                         if (lap.laps >= 1)
-                            cover.drawBarChevrons(ctx, width, height, lap.laps, lap.over)
+                            ProgressMarkers.drawBar(ctx, width, height, lap.laps, lap.over)
                     }
                 }
             }
@@ -154,7 +137,7 @@ CoverBackground {
                         ctx.clearRect(0, 0, width, height)
                         var lap = parent.parent.lap
                         if (lap.laps >= 1)
-                            cover.drawBarChevrons(ctx, width, height, lap.laps, lap.over)
+                            ProgressMarkers.drawBar(ctx, width, height, lap.laps, lap.over)
                     }
                 }
             }
@@ -191,7 +174,7 @@ CoverBackground {
                         ctx.clearRect(0, 0, width, height)
                         var lap = parent.parent.lap
                         if (lap.laps >= 1)
-                            cover.drawBarChevrons(ctx, width, height, lap.laps, lap.over)
+                            ProgressMarkers.drawBar(ctx, width, height, lap.laps, lap.over)
                     }
                 }
             }

@@ -1,6 +1,7 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
 import Aurora.Controls 1.0
+import "../ProgressMarkers.js" as ProgressMarkers
 
 Page {
     id: page
@@ -82,28 +83,6 @@ Page {
         ctx.restore()
     }
 
-    // Шевроны ">" прямо на кольце: позиция — конец текущего «круга» (overFrac),
-    // направление — по ходу заполнения (по часовой), число = полные круги (laps)
-    function drawLapChevrons(ctx, cx, cy, r, laps, overFrac, lw) {
-        var a = -Math.PI / 2 + overFrac * Math.PI * 2
-        var px = cx + r * Math.cos(a)
-        var py = cy + r * Math.sin(a)
-        var tx = -Math.sin(a), ty = Math.cos(a)  // тангент, по ходу движения
-        var nx = Math.cos(a), ny = Math.sin(a)   // радиально наружу
-        var s = lw * 0.55                        // полуразмер шеврона
-        ctx.strokeStyle = "black"
-        ctx.lineWidth = lw * 0.32
-        ctx.lineCap = "round"
-        for (var k = 0; k < laps; k++) {
-            var bx = px - tx * k * s * 1.5
-            var by = py - ty * k * s * 1.5
-            ctx.beginPath()
-            ctx.moveTo(bx - tx * s + nx * s, by - ty * s + ny * s)
-            ctx.lineTo(bx + tx * s, by + ty * s)
-            ctx.lineTo(bx - tx * s - nx * s, by - ty * s - ny * s)
-            ctx.stroke()
-        }
-    }
 
     function reload() {
         today = storage.todaySummary()
@@ -121,6 +100,11 @@ Page {
         lastSync = bluez.lastSyncTimeText()
         ringCanvas.requestPaint()
         hourlyCanvas.requestPaint()
+        cardsRepeater.model = cardModel()
+    }
+
+    function refreshGoals() {
+        ringCanvas.requestPaint()
         cardsRepeater.model = cardModel()
     }
 
@@ -269,9 +253,9 @@ Page {
 
     Connections {
         target: bluez
-        onStepsGoalChanged: reload()
-        onCaloriesGoalChanged: reload()
-        onActivityGoalChanged: reload()
+        onStepsGoalChanged: page.refreshGoals()
+        onCaloriesGoalChanged: page.refreshGoals()
+        onActivityGoalChanged: page.refreshGoals()
     }
 
     AppBar {
@@ -488,7 +472,7 @@ Page {
                                                       cx, cy - r, lw * 2.1, col)
 
                                     if (laps >= 1)
-                                        page.drawLapChevrons(ctx, cx, cy, r, laps,
+                                        ProgressMarkers.drawRing(ctx, cx, cy, r, laps,
                                                              rings[i].ov - laps, lw)
                                 }
                             }
