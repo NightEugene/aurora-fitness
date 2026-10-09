@@ -192,6 +192,7 @@ private:
     QString m_userStatus;
     DevicesModel m_devices;
 
+    qulonglong m_connectionGeneration = 0;
     QString m_pendingPath;      // объектный путь устройства, к которому подключаемся
     bool m_syncing = false;
     bool m_busy = false;        // идёт подключение/auth — для индикатора в UI

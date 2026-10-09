@@ -289,6 +289,7 @@ void BluezManager::onPropertiesChanged(const QString &interface, const QVariantM
         delete m_channel;
             m_channel = nullptr;
         }
+        ++m_connectionGeneration;
         m_resolveTimer.stop();
         m_pendingPath.clear();
         m_connectedAddress.clear();
@@ -322,6 +323,13 @@ bool BluezManager::deviceKnown(const QString &path) const
 
 void BluezManager::connectToBand(const QString &address)
 {
+    static const QRegularExpression mac(QStringLiteral("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$"));
+    if (!mac.match(address).hasMatch()) {
+        emit deviceError(QStringLiteral("Некорректный адрес Bluetooth"));
+        return;
+    }
+    if (!m_pendingPath.isEmpty() && m_pendingPath == devicePathForAddress(address)) return;
+    disconnectBand();
     if (m_channel) {
         m_syncing = false;
         delete m_channel;
@@ -354,9 +362,11 @@ void BluezManager::connectToBand(const QString &address)
 
 void BluezManager::doConnect()
 {
+    const qulonglong generation = m_connectionGeneration;
     QDBusInterface *dev = new QDBusInterface(QString::fromLatin1(BLUEZ_SERVICE), m_pendingPath,
                                              QString::fromLatin1(IFACE_DEVICE),
                                              QDBusConnection::systemBus(), this);
+    dev->deleteLater();
     if (dev->property("Connected").toBool()) {
         if (dev->property("ServicesResolved").toBool()) {
             finishConnect();
@@ -372,8 +382,9 @@ void BluezManager::doConnect()
     QDBusPendingCall call = dev->asyncCall(QStringLiteral("Connect"));
     QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(call, this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
-            [this](QDBusPendingCallWatcher *w) {
+            [this, generation](QDBusPendingCallWatcher *w) {
         w->deleteLater();
+        if (generation != m_connectionGeneration) return;
         QDBusPendingReply<void> reply = *w;
         if (reply.isError()) {
             m_pendingPath.clear();
@@ -995,6 +1006,8 @@ void BluezManager::setActivityGoal(int goal)
 
 void BluezManager::disconnectBand()
 {
+    ++m_connectionGeneration;
+    m_syncing = false;
     if (m_channel) {
         m_syncing = false;
         delete m_channel;
