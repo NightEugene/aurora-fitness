@@ -38,6 +38,12 @@ inline QSettings appSettings()
     return QSettings(appSettingsPath(), QSettings::IniFormat);
 }
 
+inline QString lastSyncSettingsKey(QString address)
+{
+    address.remove(QLatin1Char(':'));
+    return QStringLiteral("sync/lastSuccess_") + address.toLower();
+}
+
 // Вызывать при старте (все режимы): каталог нужен до первой записи,
 // а миграция переносит настройки из дореформенного расположения
 // (~/.config/ru.nighteugene/aurorafitness.conf), куда писали непесоченные

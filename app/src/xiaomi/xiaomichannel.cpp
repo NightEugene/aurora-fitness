@@ -852,21 +852,25 @@ int XiaomiChannel::uploadWriteSize() const
 void XiaomiChannel::startActivityFetch()
 {
     if (!m_authed) {
-        emit authStatusChanged(QStringLiteral("Сначала нужна аутентификация"));
+        emit activityFetchFailed(QStringLiteral("Сначала нужна аутентификация"));
         return;
     }
     if (m_activityPath.isEmpty()) {
-        emit authStatusChanged(QStringLiteral("Канал activity (0x0053) не найден"));
+        emit activityFetchFailed(QStringLiteral("Канал активности не найден"));
         return;
     }
     if (!m_fetcher) {
-        m_fetcher = new ActivityFetcher(this);
+        m_fetcher = new ActivityFetcher(this,
+                    [this](quint32 type, const QByteArray &body) { sendHealthCommand(type, body); },
+                    [this](const QByteArray &raw, const QVariantMap &parsed) { return persistActivity(raw, parsed); });
         connect(m_fetcher, &ActivityFetcher::fileParsed,
                 this, &XiaomiChannel::activityFileParsed);
         connect(m_fetcher, &ActivityFetcher::fetchProgress,
                 this, &XiaomiChannel::activityFetchProgress);
-        connect(m_fetcher, &ActivityFetcher::finished,
-                this, &XiaomiChannel::activityFetchFinished);
+        connect(m_fetcher, &ActivityFetcher::finished, this, [this](bool success) {
+            if (success) emit activityFetchFinished();
+            else emit activityFetchFailed(QStringLiteral("Не все файлы сохранены. Повторите синхронизацию."));
+        });
     }
     m_fetcher->start();
 }

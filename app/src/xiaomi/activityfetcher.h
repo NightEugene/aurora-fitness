@@ -7,8 +7,9 @@
 #include <QByteArray>
 #include <QList>
 #include <QTimer>
+#include <QVariantMap>
+#include <functional>
 
-class XiaomiChannel;
 
 // Выгрузка activity-файлов Mi Band 8 (XiaomiHealthService / XiaomiActivityFileFetcher
 // из Gadgetbridge). Команды по командному каналу (type=8), файлы стримятся на 0x0053.
@@ -16,7 +17,9 @@ class ActivityFetcher : public QObject
 {
     Q_OBJECT
 public:
-    explicit ActivityFetcher(XiaomiChannel *channel);
+    using Sender = std::function<void(quint32, const QByteArray &)>;
+    using Sink = std::function<bool(const QByteArray &, const QVariantMap &)>;
+    ActivityFetcher(QObject *parent, Sender sender, Sink sink);
 
     void start();
     // Ответы браслета type=8: subtype + содержимое поля Health (Command field 10)
@@ -29,7 +32,7 @@ public:
 signals:
     void fileParsed(const QVariantMap &data);
     void fetchProgress(const QString &status);
-    void finished();
+    void finished(bool success);
 
 private:
     enum State { Idle, WaitTodayList, WaitPastList, Fetching, Done };
@@ -40,7 +43,8 @@ private:
     void finish();
     static int fetchOrder(quint8 detailType);
 
-    XiaomiChannel *m_channel;
+    Sender m_send;
+    Sink m_save;
     State m_state = Idle;
     QList<QByteArray> m_queue;      // fileId (7 байт), отсортированные
     QByteArray m_currentFileId;
@@ -48,6 +52,7 @@ private:
     int m_portionsTotal = 0;
     int m_portionsReceived = 0;
     QTimer m_timeout;
+    bool m_failed = false;
 };
 
 #endif // XIAOMI_ACTIVITYFETCHER_H

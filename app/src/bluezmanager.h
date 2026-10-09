@@ -193,6 +193,7 @@ private:
     DevicesModel m_devices;
 
     QString m_pendingPath;      // объектный путь устройства, к которому подключаемся
+    bool m_syncing = false;
     bool m_busy = false;        // идёт подключение/auth — для индикатора в UI
     bool m_waitingForDevice = false; // ждём появления устройства в сканировании
     QString m_connectedAddress;

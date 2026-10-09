@@ -108,6 +108,8 @@ void PineTimeChannel::pump()
             m_syncing = false;
             if (!m_syncFailed)
                 emit activityFetchFinished();
+            else
+                emit activityFetchFailed(QStringLiteral("Не удалось прочитать все показания часов"));
         }
         return;
     }

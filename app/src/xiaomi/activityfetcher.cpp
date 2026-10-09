@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "activityfetcher.h"
-#include "xiaomichannel.h"
 #include "activityparser.h"
 #include "proto.h"
 
@@ -38,8 +37,8 @@ quint16 le16(const QByteArray &d, int off)
 }
 }
 
-ActivityFetcher::ActivityFetcher(XiaomiChannel *channel)
-    : QObject(channel), m_channel(channel)
+ActivityFetcher::ActivityFetcher(QObject *parent, Sender sender, Sink sink)
+    : QObject(parent), m_send(std::move(sender)), m_save(std::move(sink))
 {
     m_timeout.setSingleShot(true);
     m_timeout.setInterval(5000);
@@ -48,6 +47,9 @@ ActivityFetcher::ActivityFetcher(XiaomiChannel *channel)
 
 void ActivityFetcher::start()
 {
+    if (isRunning()) return;
+    m_failed = false;
+    m_currentFileId.clear();
     m_queue.clear();
     m_fileBuffer.clear();
     m_portionsTotal = m_portionsReceived = 0;
@@ -57,7 +59,7 @@ void ActivityFetcher::start()
     req.varint(1, 0);
     pb::Writer health;
     health.msg(5, req);
-    m_channel->sendHealthCommand(1, health.data);
+    m_send(1, health.data);
     m_state = WaitTodayList;
     m_timeout.start();
     emit fetchProgress(QStringLiteral("Запрос списка файлов (сегодня)…"));
@@ -69,13 +71,21 @@ void ActivityFetcher::handleHealthResponse(quint32 subtype, const QByteArray &he
         return;
 
     if (subtype == 1 && m_state == WaitTodayList) {
-        const QByteArray ids = pb::first(pb::parse(healthBytes), 2).bytes;
+        const auto fields = pb::parse(healthBytes);
+        const auto field = pb::first(fields, 2);
+        const QByteArray ids = field.bytes;
+        if ((!healthBytes.isEmpty() && fields.isEmpty())
+                || (field.number == 2 && field.wireType != 2) || ids.size() % 7 != 0) {
+            m_failed = true;
+            finish();
+            return;
+        }
         for (int i = 0; i + 7 <= ids.size(); i += 7)
             m_queue.append(ids.mid(i, 7));
         qInfo() << "ActivityFetcher: файлов за сегодня:" << m_queue.size();
 
         // fetch-past — без полей
-        m_channel->sendHealthCommand(2, QByteArray());
+        m_send(2, QByteArray());
         m_state = WaitPastList;
         m_timeout.start();
         emit fetchProgress(QStringLiteral("Запрос списка файлов (архив)…"));
@@ -83,7 +93,15 @@ void ActivityFetcher::handleHealthResponse(quint32 subtype, const QByteArray &he
     }
 
     if (subtype == 2 && m_state == WaitPastList) {
-        const QByteArray ids = pb::first(pb::parse(healthBytes), 2).bytes;
+        const auto fields = pb::parse(healthBytes);
+        const auto field = pb::first(fields, 2);
+        const QByteArray ids = field.bytes;
+        if ((!healthBytes.isEmpty() && fields.isEmpty())
+                || (field.number == 2 && field.wireType != 2) || ids.size() % 7 != 0) {
+            m_failed = true;
+            finish();
+            return;
+        }
         int added = 0;
         for (int i = 0; i + 7 <= ids.size(); i += 7) {
             const QByteArray id = ids.mid(i, 7);
@@ -139,7 +157,7 @@ void ActivityFetcher::requestNextFile()
 
     pb::Writer health;
     health.bytes(2, m_currentFileId); // Health.activityRequestFileIds
-    m_channel->sendHealthCommand(3, health.data);
+    m_send(3, health.data);
     m_timeout.start();
 
     const xiaomiactivity::FileId id = xiaomiactivity::parseFileId(m_currentFileId);
@@ -152,10 +170,10 @@ void ActivityFetcher::addFilePortion(const QByteArray &portion)
 {
     if (m_state != Fetching || portion.size() < 4)
         return;
-    m_timeout.start(); // продлеваем таймаут
 
     const quint16 total = le16(portion, 0);
     const quint16 num = le16(portion, 2);
+    if (total == 0 || num == 0 || num > total) return;
     if (num == 1) {
         m_fileBuffer.clear();
         m_portionsReceived = 0;
@@ -164,6 +182,13 @@ void ActivityFetcher::addFilePortion(const QByteArray &portion)
     if (total != m_portionsTotal || num != m_portionsReceived + 1)
         return; // рассинхрон — ждём таймаут и перезапрос
 
+    if (portion.size() - 4 > 16 * 1024 * 1024 - m_fileBuffer.size()) {
+        m_failed = true;
+        m_currentFileId.clear();
+        requestNextFile();
+        return;
+    }
+    m_timeout.start();
     m_fileBuffer += portion.mid(4);
     ++m_portionsReceived;
 
@@ -188,19 +213,19 @@ void ActivityFetcher::addFilePortion(const QByteArray &portion)
         qWarning() << "ActivityFetcher: файл битый или fileId не совпал";
     }
 
+    if (!crcOk) m_failed = true;
     if (crcOk) {
-        // Отладочный дамп сырого файла для офлайн-анализа парсеров
-        const QString dumpDir = QDir::homePath() + QStringLiteral("/activity_dumps");
-        QDir().mkpath(dumpDir);
-        QFile dump(dumpDir + QStringLiteral("/%1.bin").arg(QString::fromLatin1(m_currentFileId.toHex())));
-        if (dump.open(QIODevice::WriteOnly))
-            dump.write(file);
-
         const xiaomiactivity::FileId id = xiaomiactivity::parseFileId(m_currentFileId);
         const QVariantMap parsed = xiaomiactivity::parseActivityFile(
                     id, file.mid(8, file.size() - 12));
-        emit fileParsed(parsed);
-        ackFile(m_currentFileId);
+        if (m_save && m_save(file, parsed)) {
+            if (parsed.value(QStringLiteral("kind")) == QLatin1String("unknown")) m_failed = true;
+            emit fileParsed(parsed);
+            ackFile(m_currentFileId);
+        } else {
+            m_failed = true;
+            qWarning() << "ActivityFetcher: файл не сохранён, подтверждение не отправлено";
+        }
     }
 
     m_currentFileId.clear();
@@ -211,11 +236,13 @@ void ActivityFetcher::ackFile(const QByteArray &fileId)
 {
     pb::Writer health;
     health.bytes(3, fileId); // Health.activitySyncAckFileIds
-    m_channel->sendHealthCommand(5, health.data);
+    m_send(5, health.data);
 }
 
 void ActivityFetcher::onTimeout()
 {
+    if (!isRunning()) return;
+    m_failed = true;
     if (m_state == Fetching && !m_currentFileId.isEmpty()) {
         qWarning() << "ActivityFetcher: таймаут файла, пропускаем";
         m_currentFileId.clear();
@@ -234,6 +261,7 @@ void ActivityFetcher::finish()
 {
     m_state = Done;
     m_timeout.stop();
-    emit fetchProgress(QStringLiteral("Данные обновлены"));
-    emit finished();
+    emit fetchProgress(m_failed ? QStringLiteral("Синхронизация завершена не полностью. Повторите попытку.")
+                                : QStringLiteral("Данные обновлены"));
+    emit finished(!m_failed);
 }

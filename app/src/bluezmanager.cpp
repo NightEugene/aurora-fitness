@@ -45,6 +45,12 @@ BluezManager::BluezManager(QObject *parent) : QObject(parent)
     connect(&m_resolveTimer, &QTimer::timeout, this, &BluezManager::onResolveTimeout);
 
     QSettings settings = appSettings();
+    if (!settings.value(QStringLiteral("sync/migrated"), false).toBool()) {
+        const QString address = settings.value(QStringLiteral("device/lastAddress"), settings.value(QStringLiteral("miband8/lastAddress"))).toString();
+        const QVariant previous = settings.value(QStringLiteral("device/lastSyncTime"), settings.value(QStringLiteral("miband8/lastSyncTime")));
+        if (!address.isEmpty() && previous.isValid()) settings.setValue(lastSyncSettingsKey(address), previous);
+        settings.setValue(QStringLiteral("sync/migrated"), true);
+    }
     m_capabilities = settings.value(QStringLiteral("device/capabilities")).toMap();
     m_authKeyHex = settings.value(QStringLiteral("miband8/authKey")).toString();
     m_stepsGoal = settings.value(QStringLiteral("stepsGoal"), 10000).toInt();
@@ -279,7 +285,8 @@ void BluezManager::onPropertiesChanged(const QString &interface, const QVariantM
             && !props.value(QStringLiteral("Connected")).toBool()
             && !m_connectedAddress.isEmpty()) {
         if (m_channel) {
-            delete m_channel;
+            m_syncing = false;
+        delete m_channel;
             m_channel = nullptr;
         }
         m_resolveTimer.stop();
@@ -316,6 +323,7 @@ bool BluezManager::deviceKnown(const QString &path) const
 void BluezManager::connectToBand(const QString &address)
 {
     if (m_channel) {
+        m_syncing = false;
         delete m_channel;
         m_channel = nullptr;
     }
@@ -611,18 +619,26 @@ void BluezManager::setupWearableChannel()
             m_bandInfo.insert(QStringLiteral("modelNumber"), model);
         emit bandInfoChanged();
     });
+    m_channel->setActivitySink([this](const QByteArray &raw, const QVariantMap &parsed) {
+        return m_storage.saveActivityFile(raw, parsed);
+    });
+    connect(m_channel, &WearableChannel::activityFetchFailed, this, [this](const QString &reason) {
+        m_syncing = false;
+        setStatus(reason);
+        emit deviceError(reason);
+    });
     connect(m_channel, &WearableChannel::activityFileParsed, this, [this](const QVariantMap &data) {
         m_activityResults.append(data);
-        m_storage.saveParsed(data);
         emit activityResultsChanged();
     });
     connect(m_channel, &WearableChannel::activityFetchProgress, this,
             [this](const QString &s) { setStatus(s); });
     connect(m_channel, &WearableChannel::activityFetchFinished, this,
             [this]() {
+        m_syncing = false;
         setStatus(QStringLiteral("Данные обновлены"));
         QSettings settings = appSettings();
-        settings.setValue(QStringLiteral("device/lastSyncTime"),
+        settings.setValue(lastSyncSettingsKey(m_connectedAddress),
                           QDateTime::currentDateTime().toString(Qt::ISODate));
         emit activitySyncFinished();
         notifyGoalsAchieved();
@@ -688,12 +704,14 @@ void BluezManager::sendSystemNotification(const QString &summary, const QString 
 
 void BluezManager::syncActivity()
 {
+    if (m_syncing) return;
     if (!m_channel || !m_channel->ready()) {
         setStatus(QStringLiteral("Сначала подключитесь и авторизуйтесь"));
         return;
     }
     m_activityResults.clear();
     emit activityResultsChanged();
+    m_syncing = true;
     emit activitySyncStarted();
     m_channel->sync();
 }
@@ -843,7 +861,7 @@ QString BluezManager::lastSyncTimeText() const
 {
     const QSettings settings = appSettings();
     const QDateTime t = QDateTime::fromString(
-                settings.value(QStringLiteral("device/lastSyncTime"), settings.value(QStringLiteral("miband8/lastSyncTime"))).toString(), Qt::ISODate);
+                settings.value(lastSyncSettingsKey(settings.value(QStringLiteral("device/lastAddress")).toString())).toString(), Qt::ISODate);
     if (!t.isValid())
         return QString();
     if (t.date() == QDate::currentDate())
@@ -978,6 +996,7 @@ void BluezManager::setActivityGoal(int goal)
 void BluezManager::disconnectBand()
 {
     if (m_channel) {
+        m_syncing = false;
         delete m_channel;
         m_channel = nullptr;
     }

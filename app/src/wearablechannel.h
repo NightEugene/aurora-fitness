@@ -2,6 +2,7 @@
 #define WEARABLECHANNEL_H
 
 #include <QObject>
+#include <functional>
 #include <QVariantMap>
 #include <QVariantList>
 
@@ -10,6 +11,11 @@ class WearableChannel : public QObject
     Q_OBJECT
 public:
     explicit WearableChannel(QObject *parent = nullptr) : QObject(parent) {}
+    using ActivitySink = std::function<bool(const QByteArray &, const QVariantMap &)>;
+    void setActivitySink(ActivitySink sink) { m_activitySink = std::move(sink); }
+    bool persistActivity(const QByteArray &raw, const QVariantMap &parsed) {
+        return m_activitySink && m_activitySink(raw, parsed);
+    }
     virtual bool requiresAuth() const = 0;
     virtual bool ready() const = 0;
     virtual QVariantMap capabilities() const = 0;
@@ -30,9 +36,12 @@ signals:
     void activityFileParsed(const QVariantMap &data);
     void activityFetchProgress(const QString &status);
     void activityFetchFinished();
+    void activityFetchFailed(const QString &reason);
     void stepsReceived(quint32 steps);
     void heartRateReceived(int bpm);
     void error(const QString &message);
+private:
+    ActivitySink m_activitySink;
 };
 
 WearableChannel *createWearableChannel(const QVariantList &services, QObject *parent);

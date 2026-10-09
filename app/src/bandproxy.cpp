@@ -514,7 +514,7 @@ QString BandProxy::lastSyncTimeText() const
 {
     const QSettings settings = appSettings();
     const QDateTime t = QDateTime::fromString(
-                settings.value(QStringLiteral("device/lastSyncTime"), settings.value(QStringLiteral("miband8/lastSyncTime"))).toString(), Qt::ISODate);
+                settings.value(lastSyncSettingsKey(settings.value(QStringLiteral("device/lastAddress")).toString())).toString(), Qt::ISODate);
     if (!t.isValid())
         return QString();
     if (t.date() == QDate::currentDate())
