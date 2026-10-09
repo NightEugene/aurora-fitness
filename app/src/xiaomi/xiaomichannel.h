@@ -7,6 +7,8 @@
 #include <QByteArray>
 #include <QMap>
 #include <QSet>
+#include <QTimer>
+#include <QElapsedTimer>
 
 // Канал протокола Xiaomi (Mi Band 8): транспорт поверх GATT + auth-handshake.
 // Реализация портирована из Gadgetbridge (XiaomiBleProtocolV1 / XiaomiAuthService).
@@ -126,10 +128,15 @@ private:
     quint32 m_encCounter = 1;
 
     // Сборка входящих chunked-сообщений
-    QMap<quint16, QByteArray> m_rxChunks;
-    int m_rxExpectedChunks = 0;
-    bool m_rxEncrypted = false;
-    QString m_rxCharPath;
+    struct Incoming {
+        QMap<quint16, QByteArray> chunks;
+        int expected = 0;
+        int bytes = 0;
+        bool encrypted = false;
+        QElapsedTimer age;
+    };
+    QMap<QString, Incoming> m_incoming;
+    QTimer m_receiveTimer;
     quint32 m_notificationId = 1;
 
     // Очередь исходящих записей (BlueZ не терпит двух WriteValue параллельно)

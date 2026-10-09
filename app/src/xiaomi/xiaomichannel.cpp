@@ -57,6 +57,14 @@ const quint32 CMD_NOTIFICATION_ICON_QUERY = 16;
 
 XiaomiChannel::XiaomiChannel(QObject *parent) : WearableChannel(parent)
 {
+    m_receiveTimer.setInterval(1000);
+    connect(&m_receiveTimer, &QTimer::timeout, this, [this]() {
+        for (auto it = m_incoming.begin(); it != m_incoming.end();) {
+            if (it->age.elapsed() > 5000) it = m_incoming.erase(it);
+            else ++it;
+        }
+        if (m_incoming.isEmpty()) m_receiveTimer.stop();
+    });
 }
 
 void XiaomiChannel::setup(const QString &readCharPath, const QString &writeCharPath,
@@ -380,19 +388,25 @@ void XiaomiChannel::handlePacket(const QString &charPath, const QByteArray &pack
 
     if (chunkNo != 0) {
         // Данные чанка входящего chunked-сообщения
-        if (m_rxExpectedChunks > 0 && chunkNo <= m_rxExpectedChunks) {
-            m_rxChunks.insert(chunkNo, packet.mid(2));
-            if (m_rxChunks.size() == m_rxExpectedChunks) {
-                // Все чанки получены — подтверждаем конец передачи и собираем payload
-                writeValue(m_rxCharPath, QByteArray("\x00\x00\x01\x00", 4));
+        auto it = m_incoming.find(charPath);
+        if (it != m_incoming.end() && chunkNo <= it->expected) {
+            if (it->chunks.contains(chunkNo)) return;
+            if (packet.size() - 2 > 1024 * 1024 - it->bytes) {
+                m_incoming.erase(it);
+                emit error(QStringLiteral("Входящий пакет превышает допустимый размер"));
+                return;
+            }
+            it->bytes += packet.size() - 2;
+            it->chunks.insert(chunkNo, packet.mid(2));
+            it->age.restart();
+            if (it->chunks.size() == it->expected) {
                 QByteArray assembled;
-                for (int i = 1; i <= m_rxExpectedChunks; ++i)
-                    assembled += m_rxChunks.value(quint16(i));
-                const bool encrypted = m_rxEncrypted;
-                m_rxExpectedChunks = 0;
-                m_rxChunks.clear();
-                if (!assembled.isEmpty())
-                    deliverPayload(m_rxCharPath, encrypted, assembled);
+                assembled.reserve(it->bytes);
+                for (int i = 1; i <= it->expected; ++i) assembled += it->chunks.value(quint16(i));
+                const bool encrypted = it->encrypted;
+                m_incoming.erase(it);
+                writeValue(charPath, QByteArray("\x00\x00\x01\x00", 4));
+                if (!assembled.isEmpty()) deliverPayload(charPath, encrypted, assembled);
             }
         }
         return;
@@ -406,10 +420,13 @@ void XiaomiChannel::handlePacket(const QString &charPath, const QByteArray &pack
     case 0x00: {
         // Запрос начала chunked-передачи от браслета: 00 00 00 <enc> <numChunks u16le>
         if (packet.size() >= 6) {
-            m_rxEncrypted = packet[3] == 0x01;
-            m_rxExpectedChunks = quint8(packet[4]) | (quint16(quint8(packet[5])) << 8);
-            m_rxChunks.clear();
-            m_rxCharPath = charPath;
+            Incoming incoming;
+            incoming.encrypted = packet[3] == 0x01;
+            incoming.expected = quint8(packet[4]) | (quint16(quint8(packet[5])) << 8);
+            if (incoming.expected == 0 || incoming.expected > 4096) return;
+            incoming.age.start();
+            m_incoming.insert(charPath, incoming);
+            m_receiveTimer.start();
             writeValue(charPath, QByteArray("\x00\x00\x01\x01", 4)); // start ack
         }
         break;
