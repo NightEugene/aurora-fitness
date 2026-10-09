@@ -17,6 +17,13 @@
 - Автоподключение к браслету при запуске, настройки и БД переживают переустановку
 - Pull-to-refresh для синхронизации
 
+## Скриншоты
+
+| | | | | |
+| --- | --- | --- | --- | --- |
+| <img src="screenshots/01-main-screen.png" alt="Главный экран" width="150"> | <img src="screenshots/02-daily-statistics.png" alt="Дневная статистика" width="150"> | <img src="screenshots/03-steps.png" alt="Шаги" width="150"> | <img src="screenshots/04-calories.png" alt="Калории" width="150"> | <img src="screenshots/05-activity.png" alt="Активность" width="150"> |
+| <img src="screenshots/06-heart-rate.png" alt="Пульс" width="150"> | <img src="screenshots/07-stress.png" alt="Стресс" width="150"> | <img src="screenshots/08-sleep-stages.png" alt="Фазы сна" width="150"> | <img src="screenshots/09-spo2.png" alt="Кислород в крови (SpO2)" width="150"> | <img src="screenshots/10-battery-history.png" alt="История заряда батареи" width="150"> |
+
 ## Получение auth key для Mi Band 8
 
 Для подключения браслета нужен ключ аутентификации (32 hex-символа). Root не требуется.
