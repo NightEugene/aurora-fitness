@@ -278,29 +278,6 @@ Page {
 
         AppBarSpacer {}
 
-        Item {
-            width: syncSpinner.width
-            height: syncSpinner.height
-
-            BusyIndicator {
-                id: syncSpinner
-                size: BusyIndicatorSize.Small
-                // Крутимся при любом активном процессе: ожидание линка,
-                // подключение, ожидание сервисов, аутентификация, синк
-                running: flick.syncRunning || bluez.busy
-                         || bluez.userStatus.indexOf("…") !== -1
-                opacity: running ? 1 : 0
-            }
-        }
-
-        AppBarButton {
-            context: qsTr("Синхронизировать")
-            icon.source: "image://theme/icon-m-refresh"
-            enabled: bluez.ready
-                     && !flick.syncRunning
-            onClicked: bluez.syncActivity()
-        }
-
         AppBarButton {
             context: qsTr("Меню")
             icon.source: "image://theme/icon-splus-more"
