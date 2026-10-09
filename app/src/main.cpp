@@ -19,7 +19,7 @@
 #include "appsettings.h"
 
 namespace {
-const char APPLICATION_VERSION[] = "1.2.0";
+const char APPLICATION_VERSION[] = "1.3.0";
 // Арбитраж владения браслетом: кто держит это имя на сессионной шине,
 // тот и работает с BLE-линком (см. notificationdaemon.cpp)
 const char BAND_NAME[] = "ru.nighteugene.aurorafitness.band";

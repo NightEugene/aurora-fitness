@@ -1,6 +1,6 @@
 Name: ru.nighteugene.aurorafitness
 Summary: Фитнес-клиент для Mi Band и PineTime (BLE)
-Version: 1.2.0
+Version: 1.3.0
 Release: 1
 License: BSD-3-Clause
 Source0: %{name}-%{version}.tar.bz2
