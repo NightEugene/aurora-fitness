@@ -45,7 +45,7 @@ Page {
 
             Label {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: qsTr("Версия 1.1.0")
+                text: qsTr("Версия %1").arg(Qt.application.version)
                 color: Theme.secondaryColor
                 font.pixelSize: Theme.fontSizeSmall
             }

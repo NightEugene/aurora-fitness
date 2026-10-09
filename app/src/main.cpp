@@ -19,6 +19,7 @@
 #include "appsettings.h"
 
 namespace {
+const char APPLICATION_VERSION[] = "1.2.0";
 // Арбитраж владения браслетом: кто держит это имя на сессионной шине,
 // тот и работает с BLE-линком (см. notificationdaemon.cpp)
 const char BAND_NAME[] = "ru.nighteugene.aurorafitness.band";
@@ -58,6 +59,7 @@ int main(int argc, char *argv[])
             || cliArgs.contains(QStringLiteral("--daemon"))
             || cliArgs.contains(QStringLiteral("--dump-stats"))) {
         QScopedPointer<QCoreApplication> app(new QCoreApplication(argc, argv));
+        app->setApplicationVersion(QString::fromLatin1(APPLICATION_VERSION));
         app->setOrganizationName(QStringLiteral("ru.nighteugene"));
         app->setApplicationName(QStringLiteral("aurorafitness"));
 
@@ -239,6 +241,7 @@ int main(int argc, char *argv[])
     }
 
     QScopedPointer<QGuiApplication> application(Aurora::Application::application(argc, argv));
+    application->setApplicationVersion(QString::fromLatin1(APPLICATION_VERSION));
     application->setOrganizationName(QStringLiteral("ru.nighteugene"));
     application->setApplicationName(QStringLiteral("aurorafitness"));
 
