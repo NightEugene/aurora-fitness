@@ -76,3 +76,8 @@ DISTFILES += \
     qml/cover/DefaultCoverPage.qml \
     ru.nighteugene.aurorafitness.desktop \
     ru.nighteugene.aurorafitness-background.service
+
+license.files = LICENSE
+license.path = /usr/share/ru.nighteugene.aurorafitness
+INSTALLS += license
+DISTFILES += LICENSE
