@@ -291,6 +291,11 @@ Page {
                     onClicked: pageStack.push(Qt.resolvedUrl("SettingsPage.qml"))
                 }
                 PopupMenuItem {
+                    text: qsTr("Профиль")
+                    icon.source: "image://theme/icon-m-contact"
+                    onClicked: pageStack.push(Qt.resolvedUrl("ProfilePage.qml"))
+                }
+                PopupMenuItem {
                     text: qsTr("Цели")
                     icon.source: "image://theme/icon-m-administrator"
                     onClicked: pageStack.push(Qt.resolvedUrl("GoalsPage.qml"))

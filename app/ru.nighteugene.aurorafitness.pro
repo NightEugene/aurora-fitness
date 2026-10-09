@@ -67,6 +67,7 @@ DISTFILES += \
     qml/pages/MainPage.qml \
     qml/pages/DevicePage.qml \
     qml/pages/SettingsPage.qml \
+    qml/pages/ProfilePage.qml \
     qml/pages/GoalsPage.qml \
     qml/pages/SleepPage.qml \
     qml/pages/SleepDateDialog.qml \
