@@ -39,7 +39,7 @@ struct Reader {
         const quint64 lo = u32(), hi = u32();
         return qint64(lo | (hi << 32));
     }
-    quint16 u16be() { return (quint16(u8()) << 8) | quint16(u8()); }
+    quint16 u16be() { const quint16 hi = u8(); const quint16 lo = u8(); return (hi << 8) | lo; }
     void skip(int n)
     {
         if (n < 0 || remaining() < n) { overflow = true; pos = d.size(); return; }
@@ -376,7 +376,7 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
     // HR-сэмплы: unit u16, count u16, [firstRecordTime u32 при v>=2], count байт
     if (validData(header, headerIdx)) {
         r.u16();
-        const int count = qint16(r.u16());
+        const int count = r.u16();
         if (count > 0) {
             if (id.version >= 2)
                 r.u32();
@@ -388,7 +388,7 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
     // SpO2-сэмплы — то же строение
     if (validData(header, headerIdx)) {
         r.u16();
-        const int count = qint16(r.u16());
+        const int count = r.u16();
         if (count > 0) {
             if (id.version >= 2)
                 r.u32();
@@ -401,7 +401,7 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
     if (id.version >= 3) {
         if (validData(header, headerIdx)) {
             r.u16();
-            const int count = qint16(r.u16());
+            const int count = r.u16();
             if (count > 0) {
                 if (id.version >= 2)
                     r.u32();
@@ -426,8 +426,9 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
                 break;
             }
         }
-        if (magicAt < 0 || r.d.size() - magicAt < 17)
-            break;
+        if (magicAt < 0) break;
+        if (r.d.size() - magicAt < 17)
+            return unknown(QStringLiteral("truncated sleep packet header"));
         r.pos = magicAt + 4;
 
         r.u8();            // headerLen (всегда 17)
@@ -441,8 +442,10 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
             type == 0xd || type == 0xe || type == 0xf)
             continue;
         if (dataLen > r.remaining())
-            break; // битый хвост — сохраняем то, что собрали (как catch в Java)
+            return unknown(QStringLiteral("truncated sleep packet"));
 
+        if ((type == 16 && dataLen < 11) || (type == 17 && dataLen % 2 != 0))
+            return unknown(QStringLiteral("invalid sleep packet length"));
         const int dataEnd = r.pos + dataLen;
         if (type == 1) {
             // RR-интервалы — пропускаем
@@ -476,6 +479,7 @@ QVariantMap parseSleepDetails(const xiaomiactivity::FileId &id, const QByteArray
         r.pos = dataEnd;
     }
 
+    if (r.overflow) return unknown(QStringLiteral("truncated sleep details"));
     if (haveSummary)
         out.insert(QStringLiteral("summary"), summary);
     out.insert(QStringLiteral("stages"), stages);
@@ -490,7 +494,7 @@ QVariantMap parseSleepStages(const xiaomiactivity::FileId &id, const QByteArray 
 {
     if (id.version != 2)
         return unknown(QStringLiteral("unsupported sleep stages version %1").arg(id.version));
-    if (payload.size() < 27)
+    if (payload.size() < 29 || (payload.size() - 29) % 5 != 0)
         return unknown(QStringLiteral("sleep stages too short: %1").arg(payload.size()));
 
     Reader r(payload);
