@@ -6,6 +6,8 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QSettings>
 #include "appsettings.h"
@@ -13,6 +15,27 @@
 #include <QSqlQuery>
 #include <QStandardPaths>
 #include <QVector>
+
+namespace {
+// Все выходы до COMMIT откатывают изменения, включая ошибки миграции.
+class Transaction {
+public:
+    explicit Transaction(QSqlDatabase db) : m_db(db) {
+        QSqlQuery query(m_db);
+        m_active = query.exec(QStringLiteral("BEGIN IMMEDIATE"));
+    }
+    ~Transaction() { if (m_active) m_db.rollback(); }
+    bool active() const { return m_active; }
+    bool commit() {
+        if (!m_active || !m_db.commit()) return false;
+        m_active = false;
+        return true;
+    }
+private:
+    QSqlDatabase m_db;
+    bool m_active = false;
+};
+}
 
 // Отображение QVariant-ключей распарсенных данных на колонки БД
 static const QMap<QString, QString> SUMMARY_COLUMNS = {
@@ -31,6 +54,7 @@ Storage::Storage(QObject *parent) : QObject(parent)
 {
     m_device = appSettings().value(QStringLiteral("device/storageId")).toString().toLower();
     m_device.remove(QLatin1Char(':'));
+    if (!m_device.isEmpty() && !safeIconPackage(m_device)) m_device.clear();
     const QVariantMap capabilities = appSettings().value(QStringLiteral("device/capabilities")).toMap();
     m_estimateCalories = !capabilities.value(QStringLiteral("nativeCalories"), true).toBool();
     m_estimateActivity = !capabilities.value(QStringLiteral("nativeActivity"), true).toBool();
@@ -90,12 +114,20 @@ bool Storage::open()
     m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
                                      QStringLiteral("aurorafitness-%1").arg(quintptr(this)));
     m_db.setDatabaseName(dbPath);
+    m_db.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=5000"));
     if (!m_db.open()) {
         qWarning() << "Storage: не удалось открыть БД:" << m_db.lastError().text();
         return false;
     }
 
+    Transaction migration(m_db);
+    if (!migration.active()) return false;
     QSqlQuery q(m_db);
+    if (!q.exec(QStringLiteral("PRAGMA user_version")) || !q.next()) return false;
+    const int version = q.value(0).toInt();
+    q.finish();
+    if (version > 1) return false;
+    if (version == 1) return migration.commit();
     const QStringList ddl = {
         QStringLiteral("CREATE TABLE IF NOT EXISTS daily_summary("
                        "ts INTEGER PRIMARY KEY, steps INT, calories INT,"
@@ -126,15 +158,15 @@ bool Storage::open()
     // Миграция: раньше ключ daily_summary был fileId.timestamp (момент
     // генерации файла), из-за чего один день плодил строки. Оставляем по одной
     // (самой свежей) записи на день и нормализуем ключ к локальной полуночи.
-    q.exec(QStringLiteral("DELETE FROM daily_summary WHERE ts NOT IN ("
+    if (!q.exec(QStringLiteral("DELETE FROM daily_summary WHERE ts NOT IN ("
                           "SELECT MAX(ts) FROM daily_summary "
-                          "GROUP BY date(ts, 'unixepoch', 'localtime'))"));
-    q.exec(QStringLiteral("UPDATE daily_summary SET ts = strftime('%s', "
-                          "date(ts, 'unixepoch', 'localtime') || ' 00:00:00', 'utc')"));
+                          "GROUP BY date(ts, 'unixepoch', 'localtime'))"))) return false;
+    if (!q.exec(QStringLiteral("UPDATE daily_summary SET ts = strftime('%s', "
+                          "date(ts, 'unixepoch', 'localtime') || ' 00:00:00', 'utc')"))) return false;
 
     // Миграция: колонка activity_min (время активности, мин)
     QSqlQuery info(m_db);
-    info.exec(QStringLiteral("PRAGMA table_info(daily_summary)"));
+    if (!info.exec(QStringLiteral("PRAGMA table_info(daily_summary)"))) return false;
     bool hasActivityMin = false;
     while (info.next()) {
         if (info.value(1).toString() == QStringLiteral("activity_min")) {
@@ -142,6 +174,7 @@ bool Storage::open()
             break;
         }
     }
+    info.finish();
     if (!hasActivityMin) {
         QSqlQuery alter(m_db);
         if (!alter.exec(QStringLiteral(
@@ -154,7 +187,7 @@ bool Storage::open()
     // Миграция: поминутные active (strength-минута) и act_kcal (активные ккал)
     // для почасовых графиков; заодно spo2/stress для старых БД
     {
-        info.exec(QStringLiteral("PRAGMA table_info(minute_samples)"));
+        if (!info.exec(QStringLiteral("PRAGMA table_info(minute_samples)"))) return false;
         QStringList cols;
         while (info.next())
             cols << info.value(1).toString();
@@ -172,28 +205,55 @@ bool Storage::open()
             }
         }
     }
-    return true;
+    if (!q.exec(QStringLiteral("CREATE INDEX IF NOT EXISTS sleep_stages_session ON sleep_stages(bed_time, ts)"))
+            || !q.exec(QStringLiteral("PRAGMA user_version=1"))) return false;
+    return migration.commit();
 }
 
-void Storage::saveParsed(const QVariantMap &m)
+bool Storage::saveActivityFile(const QByteArray &raw, const QVariantMap &parsed)
 {
-    if (!m_ready)
-        return;
+    // Неизвестные форматы подтверждаем только после надёжного сохранения оригинала.
+    // Хеш содержимого сохраняет разные снимки с одинаковым fileId.
+    if (raw.size() < 12) return false;
+    const QString directory = appConfigDir() + QStringLiteral("/activity/")
+            + (m_device.isEmpty() ? QStringLiteral("legacy") : m_device);
+    if (!QDir().mkpath(directory)) return false;
+    const QString path = directory + QLatin1Char('/') + QString::fromLatin1(raw.left(7).toHex())
+            + QLatin1Char('-') + QString::fromLatin1(QCryptographicHash::hash(raw, QCryptographicHash::Sha256).toHex())
+            + QStringLiteral(".bin");
+    QFile existing(path);
+    const bool archived = existing.open(QIODevice::ReadOnly) && existing.readAll() == raw;
+    existing.close();
+    if (!archived) {
+        QSaveFile archive(path);
+        if (!archive.open(QIODevice::WriteOnly) || archive.write(raw) != raw.size()
+                || !archive.commit()) return false;
+    }
+    if (parsed.value(QStringLiteral("kind")) == QLatin1String("unknown")) return true;
+    return saveParsed(parsed);
+}
+
+bool Storage::saveParsed(const QVariantMap &m)
+{
+    if (!m_ready) return false;
+    Transaction transaction(m_db);
+    if (!transaction.active()) return false;
     const QString kind = m.value(QStringLiteral("kind")).toString();
-    if (kind == QStringLiteral("dailySummary"))
-        saveDailySummary(m);
-    else if (kind == QStringLiteral("dailyDetails"))
-        saveDailyDetails(m);
-    else if (kind == QStringLiteral("sleep"))
-        saveSleep(m);
-    else if (kind == QStringLiteral("manualSamples"))
-        saveManualSamples(m);
+    bool saved = false;
+    if (kind == QLatin1String("dailySummary")) saved = saveDailySummary(m);
+    else if (kind == QLatin1String("dailyDetails")) saved = saveDailyDetails(m);
+    else if (kind == QLatin1String("sleep")) saved = saveSleep(m);
+    else if (kind == QLatin1String("manualSamples")) saved = saveManualSamples(m);
+    if (!saved || !transaction.commit()) return false;
+    emit dataChanged();
+    return true;
 }
 
 void Storage::selectDevice(const QString &address)
 {
     QString device = address.toLower();
     device.remove(QLatin1Char(':'));
+    if (!device.isEmpty() && !safeIconPackage(device)) return;
     if (device == m_device)
         return;
     const QString connection = m_db.connectionName();
@@ -209,6 +269,8 @@ void Storage::saveLiveReading(int steps, int heartRate)
 {
     if (!m_ready)
         return;
+    Transaction transaction(m_db);
+    if (!transaction.active()) return;
     const qint64 now = QDateTime::currentDateTime().toTime_t();
     const QDate date = QDateTime::fromTime_t(uint(now)).date();
     const qint64 day = QDateTime(date).toTime_t();
@@ -228,7 +290,8 @@ void Storage::saveLiveReading(int steps, int heartRate)
             previous.addBindValue(day);
             int delta = 0;
             int active = 0;
-            if (previous.exec() && previous.next()) {
+            if (!previous.exec()) return;
+            if (previous.next()) {
                 const qint64 seen = previous.value(1).toLongLong();
                 if (now >= seen && now - seen <= 90 && steps > previous.value(2).toInt()) {
                     delta = steps - previous.value(2).toInt();
@@ -246,12 +309,12 @@ void Storage::saveLiveReading(int steps, int heartRate)
             q.addBindValue(steps);
             q.addBindValue(delta);
             q.addBindValue(active);
-            if (!q.exec())
-                qWarning() << "Step observation:" << q.lastError().text();
+            if (!q.exec()) return;
             q.prepare(QStringLiteral("SELECT COALESCE(SUM(active), 0) FROM step_observations WHERE ts>=? AND ts<?"));
             q.addBindValue(day);
             q.addBindValue(QDateTime(date.addDays(1)).toTime_t());
-            if (q.exec() && q.next())
+            if (!q.exec()) return;
+            if (q.next())
                 summary.insert(QStringLiteral("activityMin"), q.value(0));
         }
     }
@@ -267,7 +330,8 @@ void Storage::saveLiveReading(int steps, int heartRate)
         q.prepare(QStringLiteral("SELECT MIN(value), MAX(value), ROUND(AVG(value)) FROM manual_samples WHERE type='hr' AND ts>=? AND ts<?"));
         q.addBindValue(day);
         q.addBindValue(QDateTime(date.addDays(1)).toTime_t());
-        if (q.exec() && q.next()) {
+        if (!q.exec()) return;
+        if (q.next()) {
             summary.insert(QStringLiteral("minHr"), q.value(0));
             summary.insert(QStringLiteral("maxHr"), q.value(1));
             summary.insert(QStringLiteral("avgHr"), q.value(2));
@@ -275,15 +339,15 @@ void Storage::saveLiveReading(int steps, int heartRate)
         q.prepare(QStringLiteral("UPDATE minute_samples SET hr=? WHERE ts=?"));
         q.addBindValue(heartRate);
         q.addBindValue(now / 60 * 60);
-        if (q.exec() && q.numRowsAffected() == 0) {
+        if (!q.exec()) return;
+        if (q.numRowsAffected() == 0) {
             q.prepare(QStringLiteral("INSERT INTO minute_samples(ts, hr) VALUES(?, ?)"));
             q.addBindValue(now / 60 * 60);
             q.addBindValue(heartRate);
-            if (!q.exec())
-                qWarning() << "Heart rate sample:" << q.lastError().text();
+            if (!q.exec()) return;
         }
     }
-    saveDailySummary(summary);
+    if (saveDailySummary(summary) && transaction.commit()) emit dataChanged();
 }
 
 void Storage::setLiveEstimation(bool calories, bool activity)
@@ -303,8 +367,10 @@ void Storage::recalculateCalories()
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("UPDATE daily_summary SET calories=ROUND(steps * ?) WHERE steps IS NOT NULL"));
     q.addBindValue(height * 0.00415 * weight * 0.0005);
-    if (!q.exec())
+    if (!q.exec()) {
         qWarning() << "Estimated calories:" << q.lastError().text();
+        return;
+    }
     emit dataChanged();
 }
 
@@ -328,11 +394,11 @@ QVariantList Storage::hourlyActivity()
     return out;
 }
 
-void Storage::saveDailySummary(const QVariantMap &m)
+bool Storage::saveDailySummary(const QVariantMap &m)
 {
     qlonglong ts = m.value(QStringLiteral("timestamp")).toLongLong();
     if (ts == 0)
-        return;
+        return false;
 
     // fileId.timestamp у summary-файла — момент генерации файла, а не начало
     // дня: браслет при каждом синке шлёт новый ts. Нормализуем ключ к началу
@@ -351,6 +417,7 @@ void Storage::saveDailySummary(const QVariantMap &m)
         values << m.value(it.key());
     }
 
+    if (sets.isEmpty()) return true;
     QSqlQuery q(m_db);
     if (!sets.isEmpty()) {
         q.prepare(QStringLiteral("UPDATE daily_summary SET %1 WHERE ts=?")
@@ -358,10 +425,9 @@ void Storage::saveDailySummary(const QVariantMap &m)
         for (const QVariant &v : values)
             q.addBindValue(v);
         q.addBindValue(ts);
-        if (!q.exec())
-            qWarning() << "Storage: update daily_summary:" << q.lastError().text();
+        if (!q.exec()) return false;
     }
-    if (sets.isEmpty() || q.numRowsAffected() == 0) {
+    if (q.numRowsAffected() == 0) {
         cols.prepend(QStringLiteral("ts"));
         values.prepend(ts);
         QStringList placeholders;
@@ -374,24 +440,20 @@ void Storage::saveDailySummary(const QVariantMap &m)
             q.addBindValue(v);
         if (!q.exec()) {
             qWarning() << "Storage: insert daily_summary:" << q.lastError().text();
-            return;
+            return false;
         }
     }
-    emit dataChanged();
+    return true;
 }
 
-void Storage::saveDailyDetails(const QVariantMap &m)
+bool Storage::saveDailyDetails(const QVariantMap &m)
 {
     const QVariantList samples = m.value(QStringLiteral("samples")).toList();
-    if (samples.isEmpty())
-        return;
 
-    m_db.transaction();
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("INSERT OR REPLACE INTO minute_samples"
                              "(ts, steps, hr, spo2, stress, active, act_kcal)"
                              " VALUES(?, ?, ?, ?, ?, ?, ?)"));
-    int saved = 0;
     for (const QVariant &v : samples) {
         const QVariantMap s = v.toMap();
         const qlonglong ts = s.value(QStringLiteral("ts")).toLongLong();
@@ -413,50 +475,27 @@ void Storage::saveDailyDetails(const QVariantMap &m)
         q.addBindValue(s.contains(QStringLiteral("stress")) && stress > 0 ? QVariant(stress) : QVariant());
         q.addBindValue(s.contains(QStringLiteral("active")) ? QVariant(active) : QVariant());
         q.addBindValue(s.contains(QStringLiteral("actKcal")) ? QVariant(actKcal) : QVariant());
-        if (!q.exec())
-            qWarning() << "Storage: insert minute_samples:" << q.lastError().text();
-        else
-            ++saved;
+        if (!q.exec()) return false;
     }
-    m_db.commit();
 
-    // «Время активности» браслета = число strength-минут в details-файле дня
     if (m.contains(QStringLiteral("strengthMinutes"))) {
-        qlonglong dayTs = m.value(QStringLiteral("timestamp")).toLongLong();
-        if (dayTs != 0) {
-            // Ключ дня — локальная полночь (как в saveDailySummary)
-            dayTs = QDateTime(QDateTime::fromTime_t(uint(dayTs)).date()).toTime_t();
-            QSqlQuery uq(m_db);
-            uq.prepare(QStringLiteral("UPDATE daily_summary SET activity_min=? WHERE ts=?"));
-            uq.addBindValue(m.value(QStringLiteral("strengthMinutes")));
-            uq.addBindValue(dayTs);
-            if (!uq.exec())
-                qWarning() << "Storage: update activity_min:" << uq.lastError().text();
-            if (uq.numRowsAffected() == 0) {
-                uq.prepare(QStringLiteral("INSERT OR REPLACE INTO daily_summary"
-                                          "(ts, activity_min) VALUES(?, ?)"));
-                uq.addBindValue(dayTs);
-                uq.addBindValue(m.value(QStringLiteral("strengthMinutes")));
-                if (!uq.exec())
-                    qWarning() << "Storage: insert activity_min:" << uq.lastError().text();
-            }
-        }
+        return saveDailySummary({{QStringLiteral("timestamp"), m.value(QStringLiteral("timestamp"))},
+                                 {QStringLiteral("activityMin"), m.value(QStringLiteral("strengthMinutes"))}});
     }
-
-    if (saved > 0 || m.contains(QStringLiteral("strengthMinutes")))
-        emit dataChanged();
+    return true;
 }
 
-void Storage::saveSleep(const QVariantMap &m)
+bool Storage::saveSleep(const QVariantMap &m)
 {
     const qlonglong bedTime = m.value(QStringLiteral("bedTime")).toLongLong();
     const qlonglong wakeTime = m.value(QStringLiteral("wakeTime")).toLongLong();
     if (bedTime == 0)
-        return;
+        return false;
 
     // Две формы: sleepMin рядом + summary{deep/light/rem/awakeMin}
     // или всё в summary{sleepMin,wakeMin,lightMin,remMin,deepMin}
     const QVariantMap summary = m.value(QStringLiteral("summary")).toMap();
+    if (summary.isEmpty() && !m.contains(QStringLiteral("sleepMin"))) return true;
     qlonglong sleepMin = m.value(QStringLiteral("sleepMin")).toLongLong();
     if (sleepMin == 0)
         sleepMin = summary.value(QStringLiteral("sleepMin")).toLongLong();
@@ -477,14 +516,15 @@ void Storage::saveSleep(const QVariantMap &m)
     q.addBindValue(awakeMin);
     if (!q.exec()) {
         qWarning() << "Storage: insert sleep_sessions:" << q.lastError().text();
-        return;
+        return false;
     }
 
     // Пофазовая шкала: перезаписываем для этой сессии
     const QVariantList stages = m.value(QStringLiteral("stages")).toList();
+    if (stages.isEmpty()) return true; // Неполный снимок не стирает известные фазы.
     q.prepare(QStringLiteral("DELETE FROM sleep_stages WHERE bed_time=?"));
     q.addBindValue(bedTime);
-    q.exec();
+    if (!q.exec()) return false;
     for (const QVariant &v : stages) {
         const QVariantMap s = v.toMap();
         q.prepare(QStringLiteral("INSERT INTO sleep_stages(bed_time, ts, stage)"
@@ -492,22 +532,18 @@ void Storage::saveSleep(const QVariantMap &m)
         q.addBindValue(bedTime);
         q.addBindValue(s.value(QStringLiteral("ts")).toLongLong());
         q.addBindValue(s.value(QStringLiteral("stage")).toString());
-        q.exec();
+        if (!q.exec()) return false;
     }
-    emit dataChanged();
+    return true;
 }
 
-void Storage::saveManualSamples(const QVariantMap &m)
+bool Storage::saveManualSamples(const QVariantMap &m)
 {
     const QVariantList samples = m.value(QStringLiteral("samples")).toList();
-    if (samples.isEmpty())
-        return;
 
-    m_db.transaction();
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("INSERT OR REPLACE INTO manual_samples(ts, type, value)"
                              " VALUES(?, ?, ?)"));
-    int saved = 0;
     for (const QVariant &v : samples) {
         const QVariantMap s = v.toMap();
         const qlonglong ts = s.value(QStringLiteral("ts")).toLongLong();
@@ -517,14 +553,9 @@ void Storage::saveManualSamples(const QVariantMap &m)
         q.addBindValue(ts);
         q.addBindValue(type);
         q.addBindValue(s.value(QStringLiteral("value")).toLongLong());
-        if (!q.exec())
-            qWarning() << "Storage: insert manual_samples:" << q.lastError().text();
-        else
-            ++saved;
+        if (!q.exec()) return false;
     }
-    m_db.commit();
-    if (saved > 0)
-        emit dataChanged();
+    return true;
 }
 
 QVariantMap Storage::todaySummary()

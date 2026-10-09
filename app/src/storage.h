@@ -18,7 +18,8 @@ public:
     ~Storage() override;
 
     // Диспетчер по m["kind"]: dailySummary / dailyDetails / sleep / manualSamples
-    void saveParsed(const QVariantMap &m);
+    bool saveParsed(const QVariantMap &m);
+    bool saveActivityFile(const QByteArray &raw, const QVariantMap &parsed);
     void refresh();
     void saveBattery(int level, int state);
     void selectDevice(const QString &address);
@@ -43,10 +44,10 @@ signals:
 private:
     QVariantMap summaryForDay(const QDate &date);
     bool open();
-    void saveDailySummary(const QVariantMap &m);
-    void saveDailyDetails(const QVariantMap &m);
-    void saveSleep(const QVariantMap &m);
-    void saveManualSamples(const QVariantMap &m);
+    bool saveDailySummary(const QVariantMap &m);
+    bool saveDailyDetails(const QVariantMap &m);
+    bool saveSleep(const QVariantMap &m);
+    bool saveManualSamples(const QVariantMap &m);
 
     QString m_device;
     bool m_estimateCalories = false;
