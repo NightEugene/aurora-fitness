@@ -1,14 +1,14 @@
 # aurora-fitness
 
-Фитнес-приложение для ОС Аврора (Aurora OS 5.2) с поддержкой Mi Band 8.
+Фитнес-приложение для ОС Аврора (Aurora OS 5.2) с поддержкой Mi Band 8 и PineTime (InfiniTime).
 Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 
 ## Сборка и деплой
 
 - `./build.sh` — сборка в docker-образе `aurora-build-tools-nighteugene:5.2.1.200`
-  (Qt 5.6.3! обёртки в `tools/`, сборка сразу под aarch64/armv7hl/x86_64,
+  (Qt 5.6.3; сборка сразу под aarch64/armv7hl/x86_64,
   RPM в `build-docker-<arch>/RPMS/`).
-- `./build.sh --deploy` — scp на устройство + `sdk-deploy-rpm --silent`
+- `./build.sh --deploy` — scp на устройство + `sdk-deploy-rpm --silent --keepUserData`
   от defaultuser. Установка приложений ТОЛЬКО от defaultuser.
 - Устройство Fplus MP-67A27: `ssh defaultuser@192.168.2.15` (USB; приложения,
   установка ТОЛЬКО от него), `ssh root@192.168.2.15` (journalctl/rfkill).
@@ -33,6 +33,9 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   в desktop-файле. Ссылки в ~/.config/systemd/user создаёт сам systemd.
   Новая служба конфликтует со старой, поэтому одновременно они не работают.
   SHA-256 бинаря и юнита определяет необходимость перезапуска после обновления.
+  GUI вызывает Subscribe и сохраняет ревизию только после JobRemoved с результатом done;
+  отказ и таймаут задания отображаются в статусе. После удаления пакета демон
+  отключает свой автозапуск, удаляет скопированный юнит и завершается за 30–40 секунд.
   Журнал установки: `~/.config/ru.nighteugene.aurorafitness/service-install.log`.
 - build.sh --deploy устанавливает пакет и открывает GUI через RuntimeManager:
   служба настраивается самим приложением. Вручную копировать/enable юнит не надо.
@@ -74,9 +77,10 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 
 ## Браслет Mi Band 8
 
-- MAC `D0:62:2C:CF:19:02`, auth key `688ffad320bc47fc6ca4352bf138cac9`
-  (сохранён в QSettings на устройстве; ключ добывается из логов Mi Fitness,
-  grep encryptKey).
+- Адрес и ключ браслета сохранены в QSettings на устройстве
+  (`device/lastAddress`, `miband8/authKey`). Значение ключа в документацию,
+  git и журналы не включать; получать его локально из логов Mi Fitness
+  по строке `encryptKey`.
 - Первый BLE-connect часто падает (`le-connection-abort-by-local`) — повторить.
   Если BT off: `ssh root@192.168.2.15 'rfkill unblock bluetooth'`.
 
@@ -151,8 +155,10 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   слот 28 = activityType, слот 27 = totalVitality (очки).
 - Standing (slot 12, 24-битная маска часов) парсер пока отбрасывает
   (`r.skip(3)`) — посчитать биты, если понадобится карточка «время на ногах».
-- Дампы сырых файлов пишутся в `~/activity_dumps/` на устройстве
-  (отладочный код в activityfetcher.cpp).
+- Оригиналы файлов атомарно сохраняются в `appConfigDir()/activity/<устройство>/`
+  с fileId и SHA-256 в имени. Старые дампы в `~/activity_dumps/` остаются доступными.
+  ACK отправляется только после успешного архива и COMMIT для известных форматов.
+  Неизвестные форматы архивируются без изменения БД и дают неполный результат синхронизации.
 - Sleep details (ACTIVITY/8, DETAILS v2): файл — НАКОПИТЕЛЬНЫЙ снапшот ночи:
   содержит серию пакетов type 16 (summary) и type 17 (фазы), каждый следующий
   полнее, причём браслет ПЕРЕСМАТРИВАЕТ раннюю сегментацию. Склеивать записи
@@ -200,16 +206,16 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 - D-Bus API демона (`app/src/bandservice.*`): сервис/интерфейс
   `ru.nighteugene.aurorafitness.band`, путь `/band`. Метод `getState()` →
   a{sv} со всем состоянием (scanning/status/ready/bandInfo/devices/...),
-  сигнал `stateChanged(a{sv})` (со схлопыванием 200 мс; массивы samples/stages
-  в activityResults заменены списком нулей той же длины — QVariant() шина
-  не маршалит), сигналы `activitySyncStarted/Finished`, `deviceError`,
+  сигнал `stateChanged(a{sv})` (со схлопыванием 200 мс; вместо массивов samples/stages
+  в activityResults передаются числовые samplesCount/stagesCount), сигналы `activitySyncStarted/Finished`, `deviceError`,
   методы startScan/stopScan/connectToBand/disconnectBand/syncActivity/
   startBandAuth/setAuthKey/sendTestNotification. Каждый вызов логируется
   (песоченый GUI в журнал не пишет) и дёргает reloadSettings демона.
   Снапшот содержит dataRevision: счётчик Storage::dataChanged демона.
   BandProxy по его изменению вызывает Storage::refresh() GUI (перечитать
   настройки выбранного устройства и уведомить QML), без записи в БД.
-  Так обложка/карточки обновляются при фоновом синке и чтении батареи.
+  Так обложка/карточки обновляются при фоновом синке. saveBattery тоже
+  испускает dataChanged после успешной записи, включая уровень 0%.
 - GUI: `app/src/bandproxy.*` — context property `bluez` с теми же
   именами property/методов/сигналов, что BluezManager. Локально (без шины):
   цели, профиль, вид карточек, свитчи демона (appSettings). Переключатели
@@ -279,3 +285,13 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
 ## Логи
 
 Android-логи Mi Fitness (для изучения протокола) — в `logs/`.
+
+## Проверки релизных исправлений
+
+- `./tests/run.sh` и `./tests/release-audit.sh` — Qt 5.6 + UBSan, отдельный временный HOME.
+- `Storage::saveParsed()` возвращает bool; запись файла — одна транзакция.
+  Схема SQLite имеет user_version=1; миграции повторно не выполняются.
+- Очередь уведомлений: 20 сообщений, срок пять минут, очистка при отключении
+  и смене устройства. Время попытки синхронизации отделено от времени успеха.
+- CLI возвращает 1 при ошибке и 2 при таймауте. `--qml Страница.qml`
+  открывает страницу внутри ApplicationWindow, чтобы работали Aurora.Controls.
