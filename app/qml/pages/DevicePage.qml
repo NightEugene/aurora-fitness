@@ -168,9 +168,9 @@ Page {
                         if (m.kind === "sleep")
                             return dt + " — сон: " + (m.summary ? m.summary.sleepMin : "?") + " мин"
                         if (m.kind === "dailyDetails")
-                            return dt + " — поминутные сэмплы: " + (m.samples ? m.samples.length : 0)
+                            return dt + " — поминутные сэмплы: " + (m.samplesCount || 0)
                         if (m.kind === "manualSamples")
-                            return dt + " — точечные измерения: " + (m.samples ? m.samples.length : 0)
+                            return dt + " — точечные измерения: " + (m.samplesCount || 0)
                         return dt + " — " + (m.kind || "unknown")
                     }
                 }

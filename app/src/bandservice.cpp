@@ -90,20 +90,14 @@ QVariantMap BandService::collectState() const
     s.insert(QStringLiteral("services"), m_bluez->services());
     s.insert(QStringLiteral("devices"), m_bluez->devices()->toList());
 
-    // Массивы сэмплов по шине не гоняем (тысячи записей на каждый апдейт) —
-    // GUI нужна только длина, подменяем списком нулей того же размера
-    // (QVariant() недопустим: D-Bus не маршалит invalid-варианты)
+    // GUI достаточно количества записей; сырые массивы остаются в SQLite.
     QVariantList results;
     for (const QVariant &v : m_bluez->activityResults()) {
         QVariantMap m = v.toMap();
         for (const QString &k : {QStringLiteral("samples"), QStringLiteral("stages")}) {
-            const int n = m.value(k).toList().size();
-            if (n > 0) {
-                QVariantList stub;
-                stub.reserve(n);
-                for (int i = 0; i < n; ++i)
-                    stub.append(QVariant(0));
-                m.insert(k, stub);
+            if (m.contains(k)) {
+                m.insert(k + QStringLiteral("Count"), m.value(k).toList().size());
+                m.remove(k);
             }
         }
         results.append(m);
