@@ -35,7 +35,7 @@ bool requestBandName()
                                             QString::fromLatin1(BAND_NAME), 3u);
     if (!reply.isValid())
         qWarning() << "RequestName:" << reply.error().message();
-    return reply.isValid() && reply.value() == 1; // PRIMARY_OWNER
+    return reply.isValid() && (reply.value() == 1 || reply.value() == 4); // PRIMARY_OWNER / ALREADY_OWNER
 }
 }
 
@@ -70,7 +70,10 @@ int main(int argc, char *argv[])
                 || cliArgs.contains(QStringLiteral("--sync"))
                 || cliArgs.contains(QStringLiteral("--notify"))) {
             const bool owned = requestBandName();
-            qInfo() << "D-Bus имя браслета (CLI):" << (owned ? "захвачено" : "НЕ захвачено");
+            if (!owned) {
+                qWarning() << "Не удалось получить владение браслетом";
+                return 1;
+            }
         }
         if (cliArgs.contains(QStringLiteral("--daemon"))) {
             // --daemon [MAC] [hex-key] — демон пересылки уведомлений и автосинка
@@ -94,8 +97,7 @@ int main(int argc, char *argv[])
                 return 1;
             // D-Bus API для GUI: снапшот состояния + команды к браслету
             BandService bandApi(&manager);
-            if (!bandApi.start())
-                qWarning() << "BandService: регистрация D-Bus объекта не удалась";
+            if (!bandApi.start()) return 1;
             // Каждый входящий D-Bus вызов — повод перечитать настройки
             QObject::connect(&bandApi, &BandService::invoked,
                              &daemon, &NotificationDaemon::reloadSettings);
@@ -130,11 +132,11 @@ int main(int argc, char *argv[])
             });
             QObject::connect(&manager, &BluezManager::deviceError, app.data(),
                              [&](const QString &msg) {
-                qWarning() << "=== FAILED:" << msg << "===";
-                app->quit();
+                qWarning() << "Ошибка операции:" << msg;
+                app->exit(1);
             });
             QTimer::singleShot(500, [&]() { manager.connectToBandWhenFree(cliArgs.at(idx + 1)); });
-            QTimer::singleShot(90000, app.data(), &QCoreApplication::quit);
+            QTimer::singleShot(90000, app.data(), [&]() { app->exit(2); });
             return app->exec();
         }
         if (cliArgs.contains(QStringLiteral("--dump-stats"))) {
@@ -175,11 +177,11 @@ int main(int argc, char *argv[])
             });
             QObject::connect(&manager, &BluezManager::deviceError, app.data(),
                              [&](const QString &msg) {
-                qWarning() << "=== FAILED:" << msg << "===";
-                app->quit();
+                qWarning() << "Ошибка операции:" << msg;
+                app->exit(1);
             });
             QTimer::singleShot(500, [&]() { manager.connectToBandWhenFree(cliArgs.at(idx + 1)); });
-            QTimer::singleShot(300000, app.data(), &QCoreApplication::quit);
+            QTimer::singleShot(300000, app.data(), [&]() { app->exit(2); });
             return app->exec();
         }
         if (cliArgs.contains(QStringLiteral("--auth"))) {
@@ -196,11 +198,11 @@ int main(int argc, char *argv[])
             });
             QObject::connect(&manager, &BluezManager::deviceError, app.data(),
                              [&](const QString &msg) {
-                qWarning() << "=== FAILED:" << msg << "===";
-                app->quit();
+                qWarning() << "Ошибка операции:" << msg;
+                app->exit(1);
             });
             QTimer::singleShot(500, [&]() { manager.connectToBandWhenFree(cliArgs.at(idx + 1)); });
-            QTimer::singleShot(90000, app.data(), &QCoreApplication::quit);
+            QTimer::singleShot(90000, app.data(), [&]() { app->exit(2); });
             return app->exec();
         }
         if (cliArgs.contains(QStringLiteral("--scan"))) {
@@ -208,6 +210,10 @@ int main(int argc, char *argv[])
             const int idx = cliArgs.indexOf(QStringLiteral("--scan"));
             if (idx + 1 < cliArgs.size())
                 secs = cliArgs.at(idx + 1).toInt();
+            if (secs < 1 || secs > 3600) {
+                qWarning() << "Продолжительность сканирования должна быть от 1 до 3600 секунд";
+                return 1;
+            }
             manager.startScan();
             QTimer::singleShot(secs * 1000, app.data(), [&]() {
                 manager.cliScanFinished();
@@ -226,9 +232,9 @@ int main(int argc, char *argv[])
             app->quit();
         });
         QObject::connect(&manager, &BluezManager::deviceError, app.data(),
-                         [&](const QString &) { app->quit(); });
+                         [&](const QString &) { app->exit(1); });
         QTimer::singleShot(500, [&]() { manager.connectToBandWhenFree(cliArgs.at(idx + 1)); });
-        QTimer::singleShot(60000, app.data(), &QCoreApplication::quit);
+        QTimer::singleShot(60000, app.data(), [&]() { app->exit(2); });
         return app->exec();
     }
 
