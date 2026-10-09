@@ -279,7 +279,6 @@ Page {
         AppBarSpacer {}
 
         AppBarButton {
-            context: qsTr("Меню")
             icon.source: "image://theme/icon-splus-more"
             onClicked: mainMenu.open()
 
