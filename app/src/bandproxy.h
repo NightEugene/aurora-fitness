@@ -43,6 +43,7 @@ class BandProxy : public QObject
     Q_PROPERTY(bool estimatedActivity READ estimatedActivity NOTIFY capabilitiesChanged)
     Q_PROPERTY(double weightKg READ weightKg WRITE setWeightKg NOTIFY profileChanged)
     Q_PROPERTY(int heightCm READ heightCm WRITE setHeightCm NOTIFY profileChanged)
+    Q_PROPERTY(int daemonSyncIntervalMin READ daemonSyncIntervalMin WRITE setDaemonSyncIntervalMin NOTIFY daemonSyncIntervalChanged)
     Q_PROPERTY(QVariantList activityResults READ activityResults NOTIFY activityResultsChanged)
     Q_PROPERTY(QVariantMap cardVisibility READ cardVisibility NOTIFY viewConfigChanged)
     Q_PROPERTY(QStringList cardOrder READ cardOrder NOTIFY viewConfigChanged)
@@ -96,6 +97,8 @@ public:
     Q_INVOKABLE bool daemonEnabled() const;
     Q_INVOKABLE void setDaemonSyncEnabled(bool enabled);
     Q_INVOKABLE bool daemonSyncEnabled() const;
+    int daemonSyncIntervalMin() const;
+    void setDaemonSyncIntervalMin(int minutes);
     Q_INVOKABLE QString lastSyncTimeText() const;
     Q_INVOKABLE void setCardVisible(const QString &id, bool visible);
     Q_INVOKABLE void moveCard(const QString &id, int dir);
@@ -118,6 +121,7 @@ signals:
     void bandReadyChanged();
     void capabilitiesChanged();
     void profileChanged();
+    void daemonSyncIntervalChanged();
     void viewConfigChanged();
     void activityResultsChanged();
     void activitySyncStarted();

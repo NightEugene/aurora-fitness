@@ -429,6 +429,22 @@ bool BandProxy::daemonSyncEnabled() const
     return settings.value(QStringLiteral("daemon/syncEnabled"), false).toBool();
 }
 
+int BandProxy::daemonSyncIntervalMin() const
+{
+    return qBound(1, appSettings().value(QStringLiteral("daemon/syncIntervalMin"), 30).toInt(), 1440);
+}
+
+void BandProxy::setDaemonSyncIntervalMin(int minutes)
+{
+    if (minutes < 1 || minutes > 1440 || minutes == daemonSyncIntervalMin())
+        return;
+    QSettings settings = appSettings();
+    settings.setValue(QStringLiteral("daemon/syncIntervalMin"), minutes);
+    settings.sync();
+    emit daemonSyncIntervalChanged();
+    callDaemon(QStringLiteral("getState"));
+}
+
 QString BandProxy::lastSyncTimeText() const
 {
     const QSettings settings = appSettings();

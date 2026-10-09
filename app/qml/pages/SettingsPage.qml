@@ -47,10 +47,25 @@ Page {
             }
 
             TextSwitch {
-                text: qsTr("Автосинхронизация каждые 30 мин")
+                text: qsTr("Автосинхронизация")
                 description: qsTr("Демон периодически синхронизирует данные активности")
                 checked: bluez.daemonSyncEnabled()
                 onClicked: bluez.setDaemonSyncEnabled(checked)
+            }
+
+            TextField {
+                width: parent.width
+                label: qsTr("Интервал автосинхронизации, мин")
+                inputMethodHints: Qt.ImhDigitsOnly
+                validator: IntValidator { bottom: 1; top: 1440 }
+                Component.onCompleted: text = bluez.daemonSyncIntervalMin
+                function apply() {
+                    if (acceptableInput)
+                        bluez.daemonSyncIntervalMin = parseInt(text)
+                    text = bluez.daemonSyncIntervalMin
+                }
+                EnterKey.onClicked: { apply(); focus = false }
+                onActiveFocusChanged: if (!activeFocus) apply()
             }
 
             SectionHeader {
