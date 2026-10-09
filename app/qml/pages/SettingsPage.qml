@@ -47,6 +47,7 @@ Page {
             }
 
             TextSwitch {
+                id: autoSyncSwitch
                 text: qsTr("Автосинхронизация")
                 description: qsTr("Демон периодически синхронизирует данные активности")
                 checked: bluez.daemonSyncEnabled()
@@ -55,6 +56,7 @@ Page {
 
             TextField {
                 width: parent.width
+                enabled: autoSyncSwitch.checked
                 label: qsTr("Интервал автосинхронизации, мин")
                 inputMethodHints: Qt.ImhDigitsOnly
                 validator: IntValidator { bottom: 1; top: 1440 }
