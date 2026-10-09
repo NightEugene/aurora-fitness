@@ -6,6 +6,7 @@
 #include "xiaomi/xiaomichannel.h"
 
 #include <QImage>
+#include <QCoreApplication>
 
 #include <QSocketNotifier>
 #include <QSettings>
@@ -43,6 +44,29 @@ NotificationDaemon::NotificationDaemon(BluezManager *bluez, const QString &mac, 
     m_notificationTimer.setSingleShot(true);
     m_notificationTimer.setInterval(1000);
     connect(&m_notificationTimer, &QTimer::timeout, this, &NotificationDaemon::flushPendingNotification);
+    // APM не выполняет RPM-скрипты удаления. Демон завершает себя сам;
+    // пауза защищает обычную переустановку, когда бинарь ненадолго исчезает.
+    m_installationTimer.setInterval(10000);
+    connect(&m_installationTimer, &QTimer::timeout, this, [this]() {
+        if (QFile::exists(QStringLiteral("/usr/bin/ru.nighteugene.aurorafitness"))) {
+            m_missingInstallation.invalidate();
+            return;
+        }
+        if (!m_missingInstallation.isValid()) { m_missingInstallation.start(); return; }
+        if (m_missingInstallation.elapsed() < 30000) return;
+        const QString name = QStringLiteral("ru.nighteugene.aurorafitness-background.service");
+        QDBusInterface manager(QStringLiteral("org.freedesktop.systemd1"),
+                               QStringLiteral("/org/freedesktop/systemd1"),
+                               QStringLiteral("org.freedesktop.systemd1.Manager"), QDBusConnection::sessionBus());
+        manager.setTimeout(3000);
+        const QDBusMessage reply = manager.call(QStringLiteral("DisableUnitFiles"), QStringList{name}, false);
+        if (reply.type() != QDBusMessage::ErrorMessage) {
+            QFile::remove(appConfigDir() + QLatin1Char('/') + name);
+            manager.call(QStringLiteral("Reload"));
+        }
+        m_bluez->disconnectBand();
+        QCoreApplication::quit();
+    });
     m_minuteTimer.setInterval(60000);
     connect(&m_minuteTimer, &QTimer::timeout, this, &NotificationDaemon::onMinuteTick);
 
@@ -107,6 +131,7 @@ bool NotificationDaemon::start()
 
     reloadSettings();
     m_minuteTimer.start();
+    m_installationTimer.start();
     if (m_bandAllowed)
         ensureBandConnected();
 

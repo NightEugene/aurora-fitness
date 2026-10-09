@@ -70,6 +70,8 @@ private:
     QString m_mac;
 
     QTimer m_minuteTimer;
+    QTimer m_installationTimer;
+    QElapsedTimer m_missingInstallation;
     bool m_notifyEnabled = false;
     bool m_syncEnabled = false;
     int m_syncIntervalMin = 30;
