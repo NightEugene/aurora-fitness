@@ -606,14 +606,14 @@ QVariantMap Storage::summaryForDay(const QDate &date)
 QVariantList Storage::dailySummaries(int days)
 {
     QVariantList out;
-    if (!m_ready || days <= 0)
+    if (!m_ready || days < 0)
         return out;
 
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("SELECT ts, steps, calories, avg_hr, activity_min,"
                              " stress_avg, spo2_avg FROM daily_summary"
                              " ORDER BY ts DESC LIMIT ?"));
-    q.addBindValue(days);
+    q.addBindValue(days == 0 ? -1 : days);
     if (!q.exec())
         return out;
     while (q.next()) {
@@ -633,14 +633,14 @@ QVariantList Storage::dailySummaries(int days)
 QVariantList Storage::sleepSessions(int limit)
 {
     QVariantList out;
-    if (!m_ready || limit <= 0)
+    if (!m_ready || limit < 0)
         return out;
 
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("SELECT bed_time, wake_time, sleep_min, deep_min,"
                              " light_min, rem_min, awake_min FROM sleep_sessions"
                              " ORDER BY bed_time DESC LIMIT ?"));
-    q.addBindValue(limit);
+    q.addBindValue(limit == 0 ? -1 : limit);
     if (!q.exec())
         return out;
     while (q.next()) {

@@ -68,6 +68,10 @@ Page {
         return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 1000
     }
 
+    function nextDayTs(d) {
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() / 1000
+    }
+
     function fmtLongDate(d) {
         return d.getDate() + " " + monthNames[d.getMonth()] + " " + d.getFullYear() + " г."
     }
@@ -109,11 +113,11 @@ Page {
     }
 
     function reload() {
-        summaries = storage.dailySummaries(90)
+        summaries = storage.dailySummaries(0)
         var t0 = dayStartTs(currentDate)
         day = storage.daySummary(t0)
         if (intraday || hourlyField !== "") {
-            var raw = storage.minuteSamples(t0, t0 + 86399)
+            var raw = storage.minuteSamples(t0, nextDayTs(currentDate) - 1)
             if (intraday) {
                 var hr = []
                 for (var i = 0; i < raw.length; i++) {
@@ -481,7 +485,7 @@ Page {
                             ctx.beginPath()
                             var started = false
                             for (i = 0; i < pts.length; i++) {
-                                var x = labelW + (width - labelW) * (pts[i].ts - t0) / 86400
+                                var x = labelW + (width - labelW) * (pts[i].ts - t0) / (page.nextDayTs(page.currentDate) - t0)
                                 var y = chartH * (1 - (pts[i].hr - lo) / (hi - lo))
                                 if (!started) {
                                     ctx.moveTo(x, y)

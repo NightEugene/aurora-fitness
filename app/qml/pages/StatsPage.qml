@@ -71,7 +71,7 @@ Page {
     }
 
     function reload() {
-        summaries = storage.dailySummaries(90)
+        summaries = storage.dailySummaries(0)
         var t0 = dayStartTs(currentDate)
         day = storage.daySummary(t0)
 

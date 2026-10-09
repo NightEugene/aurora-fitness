@@ -7,6 +7,7 @@ Page {
 
     property var sessions: []
     property int selected: 0
+    property int historyLimit: 14
     property var current: null
     property var stages: []
     property int tappedSeg: -1
@@ -25,14 +26,18 @@ Page {
     }
 
     function reload() {
-        var all = storage.sleepSessions(14)
+        var all = storage.sleepSessions(0)
         var ok = []
         for (var i = 0; i < all.length; i++) {
             if (hasPhases(all[i]))
                 ok.push(all[i])
         }
+        var selectedBedTime = current ? current.bedTime : 0
         sessions = ok
-        selectSession(Math.min(selected, Math.max(ok.length - 1, 0)))
+        var found = 0
+        for (i = 0; i < ok.length; i++)
+            if (ok[i].bedTime === selectedBedTime) { found = i; break }
+        selectSession(found)
     }
 
     function selectSession(i) {
@@ -648,7 +653,7 @@ Page {
                     }
 
                     Repeater {
-                        model: page.sessions.length > 1 ? page.sessions.slice(1) : []
+                        model: page.sessions.length > 1 ? page.sessions.slice(1, page.historyLimit) : []
 
                         Rectangle {
                             width: histCol.width
@@ -690,6 +695,12 @@ Page {
                 }
             }
 
+            Button {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: page.sessions.length > page.historyLimit
+                text: qsTr("Показать ещё")
+                onClicked: page.historyLimit += 14
+            }
             Item { width: 1; height: Theme.paddingMedium }
         }
 
