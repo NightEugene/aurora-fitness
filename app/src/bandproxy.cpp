@@ -84,7 +84,7 @@ BandProxy::BandProxy(Storage *storage, QObject *parent)
     QDBusConnection bus = QDBusConnection::sessionBus();
     bus.connect(QString::fromLatin1(BAND_SERVICE), QString::fromLatin1(BAND_PATH),
                 QString::fromLatin1(BAND_SERVICE), QStringLiteral("stateChanged"),
-                this, SLOT(onStateChanged(QVariantMap)));
+                this, SLOT(onStateSignal(QVariantMap,QDBusMessage)));
     bus.connect(QString::fromLatin1(BAND_SERVICE), QString::fromLatin1(BAND_PATH),
                 QString::fromLatin1(BAND_SERVICE), QStringLiteral("activitySyncStarted"),
                 this, SIGNAL(activitySyncStarted()));
@@ -96,18 +96,13 @@ BandProxy::BandProxy(Storage *storage, QObject *parent)
                 this, SIGNAL(deviceError(QString)));
 
     m_watcher = new QDBusServiceWatcher(QString::fromLatin1(BAND_SERVICE), bus,
-                                        QDBusServiceWatcher::WatchForRegistration
-                                        | QDBusServiceWatcher::WatchForUnregistration, this);
-    connect(m_watcher, &QDBusServiceWatcher::serviceRegistered,
-            this, &BandProxy::onServiceRegistered);
-    connect(m_watcher, &QDBusServiceWatcher::serviceUnregistered,
-            this, &BandProxy::onServiceUnregistered);
-
-    if (bus.interface()->isServiceRegistered(QString::fromLatin1(BAND_SERVICE))) {
-        refreshState();
-    } else {
-        setOffline(tr("Служба браслета не запущена"));
-    }
+                                        QDBusServiceWatcher::WatchForOwnerChange, this);
+    connect(m_watcher, &QDBusServiceWatcher::serviceOwnerChanged,
+            this, &BandProxy::onOwnerChanged);
+    if (bus.interface())
+        m_owner = bus.interface()->serviceOwner(QString::fromLatin1(BAND_SERVICE)).value();
+    if (!m_owner.isEmpty()) refreshState();
+    else setOffline(tr("Служба браслета не запущена"));
     tryStartDaemon();
 }
 
@@ -115,34 +110,48 @@ void BandProxy::callDaemon(const QString &method,
                            const QVariant &a1, const QVariant &a2,
                            const QVariant &a3, const QVariant &a4)
 {
-    QDBusMessage msg = QDBusMessage::createMethodCall(
-                QString::fromLatin1(BAND_SERVICE), QString::fromLatin1(BAND_PATH),
-                QString::fromLatin1(BAND_SERVICE), method);
+    if (m_owner.isEmpty()) {
+        emit deviceError(tr("Служба браслета не запущена"));
+        return;
+    }
+    QDBusMessage msg = QDBusMessage::createMethodCall(m_owner, QString::fromLatin1(BAND_PATH),
+                                                    QString::fromLatin1(BAND_SERVICE), method);
     QVariantList args;
     for (const QVariant &a : {a1, a2, a3, a4}) {
-        if (!a.isValid())
-            break;
+        if (!a.isValid()) break;
         args << a;
     }
     msg.setArguments(args);
-    QDBusConnection::sessionBus().asyncCall(msg);
+    const qulonglong generation = m_generation;
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg, 15000), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher, generation]() {
+        const QDBusMessage reply = watcher->reply();
+        watcher->deleteLater();
+        if (generation != m_generation) return;
+        if (reply.type() == QDBusMessage::ErrorMessage) {
+            const QString reason = tr("Не удалось выполнить команду: %1").arg(reply.errorMessage());
+            setLocalStatus(reason);
+            emit deviceError(reason);
+        }
+    });
 }
 
 void BandProxy::refreshState()
 {
-    QDBusInterface iface(QString::fromLatin1(BAND_SERVICE),
-                         QString::fromLatin1(BAND_PATH),
-                         QString::fromLatin1(BAND_SERVICE),
-                         QDBusConnection::sessionBus());
-    QDBusPendingCall call = iface.asyncCall(QStringLiteral("getState"));
-    QDBusPendingCallWatcher *watcher = new QDBusPendingCallWatcher(call, this);
-    connect(watcher, &QDBusPendingCallWatcher::finished,
-            this, &BandProxy::onGetStateFinished);
+    if (m_owner.isEmpty()) return;
+    const QDBusMessage msg = QDBusMessage::createMethodCall(m_owner, QString::fromLatin1(BAND_PATH),
+                            QString::fromLatin1(BAND_SERVICE), QStringLiteral("getState"));
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg, 15000), this);
+    watcher->setProperty("generation", m_generation);
+    watcher->setProperty("snapshot", ++m_snapshotVersion);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, &BandProxy::onGetStateFinished);
 }
 
 void BandProxy::onGetStateFinished(QDBusPendingCallWatcher *watcher)
 {
     watcher->deleteLater();
+    if (watcher->property("generation").toULongLong() != m_generation
+            || watcher->property("snapshot").toULongLong() != m_snapshotVersion) return;
     const QDBusPendingReply<QVariantMap> reply = *watcher;
     if (!reply.isValid()) {
         setOffline(tr("Служба браслета не отвечает"));
@@ -151,39 +160,47 @@ void BandProxy::onGetStateFinished(QDBusPendingCallWatcher *watcher)
     onStateChanged(reply.value());
 }
 
-void BandProxy::onServiceRegistered()
+void BandProxy::onOwnerChanged(const QString &, const QString &, const QString &newOwner)
 {
-    m_haveDataRevision = false;
-    refreshState();
+    ++m_generation;
+    m_owner = newOwner;
+    setOffline(tr("Служба браслета не запущена"));
+    if (!m_owner.isEmpty()) refreshState();
 }
 
-void BandProxy::onServiceUnregistered()
+void BandProxy::onStateSignal(const QVariantMap &state, const QDBusMessage &message)
 {
-    setOffline(tr("Служба браслета не запущена"));
+    if (message.service() != m_owner) return;
+    ++m_snapshotVersion;
+    onStateChanged(state);
 }
 
 void BandProxy::setOffline(const QString &reason)
 {
-    const bool wasReady = m_ready;
-    const bool hadAddress = !m_connectedAddress.isEmpty();
-    const bool wasBusy = m_busy;
-    m_ready = false;
-    m_busy = false;
+    m_ready = m_busy = m_scanning = m_adapterPowered = false;
+    m_haveDataRevision = false;
+    m_requiresAuth = false;
     m_connectedAddress.clear();
     m_connectedDeviceName.clear();
+    m_authStatus.clear();
+    m_bandInfo.clear();
+    m_services.clear();
+    m_devices.clear();
+    m_activityResults.clear();
     m_heartRate = -1;
-    m_status = reason;
-    m_userStatus = reason;
+    m_status = m_userStatus = reason;
     emit statusChanged();
     emit userStatusChanged();
-    if (wasReady)
-        emit bandReadyChanged();
-    if (wasBusy)
-        emit busyChanged();
-    if (hadAddress) {
-        emit connectedAddressChanged();
-        emit bandInfoChanged();
-    }
+    emit bandReadyChanged();
+    emit busyChanged();
+    emit scanningChanged();
+    emit adapterPoweredChanged();
+    emit authStatusChanged();
+    emit connectedAddressChanged();
+    emit bandInfoChanged();
+    emit servicesChanged();
+    emit devicesChanged();
+    emit activityResultsChanged();
 }
 
 void BandProxy::onStateChanged(const QVariantMap &state)

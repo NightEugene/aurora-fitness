@@ -10,6 +10,7 @@
 
 class Storage;
 class QDBusServiceWatcher;
+class QDBusMessage;
 class QDBusPendingCallWatcher;
 
 // Клиентская обёртка над D-Bus API демона (BandService). Для QML выглядит
@@ -131,8 +132,8 @@ signals:
 private slots:
     void onStateChanged(const QVariantMap &state);
     void onGetStateFinished(QDBusPendingCallWatcher *watcher);
-    void onServiceRegistered();
-    void onServiceUnregistered();
+    void onOwnerChanged(const QString &service, const QString &oldOwner, const QString &newOwner);
+    void onStateSignal(const QVariantMap &state, const QDBusMessage &message);
 
 private:
     void callDaemon(const QString &method,
@@ -153,6 +154,9 @@ private:
     qulonglong m_dataRevision = 0;
     bool m_haveDataRevision = false;
     QDBusServiceWatcher *m_watcher = nullptr;
+    QString m_owner;
+    qulonglong m_generation = 0;
+    qulonglong m_snapshotVersion = 0;
 
     // Зеркало состояния демона
     bool m_scanning = false;
