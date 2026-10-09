@@ -187,6 +187,10 @@ void DataUpload::sendNextPart()
 
     // Характеристика 0x0055: шифрование всегда с counter=0 (incrementNonce=false в GB)
     const QByteArray enc = m_channel->encryptUploadPayload(part);
+    if (enc.isEmpty()) {
+        finish(false, QStringLiteral("ошибка шифрования"));
+        return;
+    }
     const int maxWrite = m_channel->uploadWriteSize();
 
     if (enc.size() + 6 <= maxWrite) {

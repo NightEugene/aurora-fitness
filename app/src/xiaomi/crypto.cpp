@@ -3,6 +3,7 @@
 #include "crypto.h"
 
 #include <openssl/evp.h>
+#include <limits>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 
@@ -22,10 +23,11 @@ QByteArray hmacSha256(const QByteArray &key, const QByteArray &msg)
 {
     QByteArray out(EVP_MAX_MD_SIZE, 0);
     unsigned int len = 0;
-    HMAC(EVP_sha256(),
+    if (!HMAC(EVP_sha256(),
          key.constData(), key.size(),
          reinterpret_cast<const uchar *>(msg.constData()), msg.size(),
-         reinterpret_cast<uchar *>(out.data()), &len);
+         reinterpret_cast<uchar *>(out.data()), &len))
+        return QByteArray();
     out.resize(int(len));
     return out;
 }
@@ -38,23 +40,29 @@ QByteArray aesCcmEncrypt(const QByteArray &key, const QByteArray &nonce, const Q
     if (!ctx)
         return QByteArray();
 
+    if (plain.size() > std::numeric_limits<int>::max() - 4) {
+        EVP_CIPHER_CTX_free(ctx);
+        return QByteArray();
+    }
     QByteArray out(plain.size() + 4, 0);
     int len = 0;
 
-    EVP_EncryptInit_ex(ctx, EVP_aes_128_ccm(), nullptr, nullptr, nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, nonce.size(), nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, 4, nullptr);
-    EVP_EncryptInit_ex(ctx, nullptr, nullptr,
-                       reinterpret_cast<const uchar *>(key.constData()),
-                       reinterpret_cast<const uchar *>(nonce.constData()));
-    // Для CCM длину plaintext нужно объявить заранее
-    EVP_EncryptUpdate(ctx, nullptr, &len, nullptr, plain.size());
-    EVP_EncryptUpdate(ctx, reinterpret_cast<uchar *>(out.data()), &len,
-                      reinterpret_cast<const uchar *>(plain.constData()), plain.size());
-    EVP_EncryptFinal_ex(ctx, reinterpret_cast<uchar *>(out.data()) + len, &len);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_GET_TAG, 4, out.data() + plain.size());
+    int finalLen = 0;
+    const bool success = EVP_EncryptInit_ex(ctx, EVP_aes_128_ccm(), nullptr, nullptr, nullptr) == 1
+            && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, nonce.size(), nullptr) == 1
+            && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, 4, nullptr) == 1
+            && EVP_EncryptInit_ex(ctx, nullptr, nullptr,
+                                 reinterpret_cast<const uchar *>(key.constData()),
+                                 reinterpret_cast<const uchar *>(nonce.constData())) == 1
+            && EVP_EncryptUpdate(ctx, nullptr, &len, nullptr, plain.size()) == 1
+            && EVP_EncryptUpdate(ctx, reinterpret_cast<uchar *>(out.data()), &len,
+                                 reinterpret_cast<const uchar *>(plain.constData()), plain.size()) == 1
+            && len == plain.size()
+            && EVP_EncryptFinal_ex(ctx, reinterpret_cast<uchar *>(out.data()) + len, &finalLen) == 1
+            && finalLen == 0
+            && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_GET_TAG, 4, out.data() + plain.size()) == 1;
     EVP_CIPHER_CTX_free(ctx);
-    return out;
+    return success ? out : QByteArray();
 }
 
 QByteArray aesCcmDecrypt(const QByteArray &key, const QByteArray &nonce, const QByteArray &cipherTag, bool *ok)
@@ -74,20 +82,19 @@ QByteArray aesCcmDecrypt(const QByteArray &key, const QByteArray &nonce, const Q
     QByteArray out(cipherLen, 0);
     int len = 0;
 
-    EVP_DecryptInit_ex(ctx, EVP_aes_128_ccm(), nullptr, nullptr, nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, nonce.size(), nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, 4,
-                        const_cast<char *>(cipherTag.constData() + cipherLen));
-    EVP_DecryptInit_ex(ctx, nullptr, nullptr,
-                       reinterpret_cast<const uchar *>(key.constData()),
-                       reinterpret_cast<const uchar *>(nonce.constData()));
-    EVP_DecryptUpdate(ctx, nullptr, &len, nullptr, cipherLen);
-    const int rv = EVP_DecryptUpdate(ctx, reinterpret_cast<uchar *>(out.data()), &len,
-                                     reinterpret_cast<const uchar *>(cipherTag.constData()),
-                                     cipherLen);
+    const bool success = EVP_DecryptInit_ex(ctx, EVP_aes_128_ccm(), nullptr, nullptr, nullptr) == 1
+            && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_IVLEN, nonce.size(), nullptr) == 1
+            && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_CCM_SET_TAG, 4,
+                                  const_cast<char *>(cipherTag.constData() + cipherLen)) == 1
+            && EVP_DecryptInit_ex(ctx, nullptr, nullptr,
+                                 reinterpret_cast<const uchar *>(key.constData()),
+                                 reinterpret_cast<const uchar *>(nonce.constData())) == 1
+            && EVP_DecryptUpdate(ctx, nullptr, &len, nullptr, cipherLen) == 1
+            && EVP_DecryptUpdate(ctx, reinterpret_cast<uchar *>(out.data()), &len,
+                                 reinterpret_cast<const uchar *>(cipherTag.constData()), cipherLen) == 1;
     EVP_CIPHER_CTX_free(ctx);
 
-    if (rv <= 0)
+    if (!success || len != cipherLen)
         return QByteArray();
     out.resize(len);
     if (ok)

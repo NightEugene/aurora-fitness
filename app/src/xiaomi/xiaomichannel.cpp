@@ -230,7 +230,13 @@ void XiaomiChannel::handleWatchNonce(const QByteArray &authMsg)
         return;
     }
 
+    m_decryptionKey.clear();
+    m_encryptionKey.clear();
     deriveKeys();
+    if (m_decryptionKey.size() != 16 || m_encryptionKey.size() != 16) {
+        emit authFailed(QStringLiteral("Не удалось получить ключи сеанса"));
+        return;
+    }
 
     const QByteArray expected = xcrypto::hmacSha256(m_decryptionKey, m_watchNonce + m_phoneNonce);
     if (expected != watchHmac) {
@@ -245,9 +251,11 @@ void XiaomiChannel::deriveKeys()
 {
     // K = HMAC-SHA256(key = phoneNonce||watchNonce, msg = authKey)
     const QByteArray k = xcrypto::hmacSha256(m_phoneNonce + m_watchNonce, m_authKey);
+    if (k.size() != 32) return;
     const QByteArray info = QByteArray("miwear-auth");
     const QByteArray t1 = xcrypto::hmacSha256(k, info + '\x01');
     const QByteArray t2 = xcrypto::hmacSha256(k, t1 + info + '\x02');
+    if (t1.size() != 32 || t2.size() != 32) return;
     const QByteArray out = t1 + t2;
 
     m_decryptionKey = out.mid(0, 16);
@@ -284,6 +292,10 @@ void XiaomiChannel::sendAppConfirm()
     const QByteArray encryptedDeviceInfo = xcrypto::aesCcmEncrypt(
                 m_encryptionKey, makeNonce(m_encryptionNonce4, 0), companion.data);
 
+    if (encryptedNonces.size() != 32 || encryptedDeviceInfo.isEmpty()) {
+        emit authFailed(QStringLiteral("Не удалось зашифровать подтверждение аутентификации"));
+        return;
+    }
     pb::Writer appConfirm;
     appConfirm.bytes(1, encryptedNonces);
     appConfirm.bytes(2, encryptedDeviceInfo);
