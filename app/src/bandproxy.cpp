@@ -103,6 +103,11 @@ BandProxy::BandProxy(Storage *storage, QObject *parent)
         m_owner = bus.interface()->serviceOwner(QString::fromLatin1(BAND_SERVICE)).value();
     if (!m_owner.isEmpty()) refreshState();
     else setOffline(tr("Служба браслета не запущена"));
+    m_serviceJobTimer.setSingleShot(true);
+    m_serviceJobTimer.setInterval(30000);
+    connect(&m_serviceJobTimer, &QTimer::timeout, this, [this]() {
+        finishServiceJob(QStringLiteral("timeout"));
+    });
     tryStartDaemon();
 }
 
@@ -404,7 +409,10 @@ void BandProxy::tryStartDaemon()
     const QByteArray unit = source.readAll();
     QCryptographicHash hash(QCryptographicHash::Sha256);
     hash.addData(unit);
-    hash.addData(&executable);
+    if (!hash.addData(&executable)) {
+        setLocalStatus(tr("Не удалось проверить версию фоновой службы"));
+        return;
+    }
     const QString revision = QString::fromLatin1(hash.result().toHex());
     const bool changed = appSettings().value(QStringLiteral("daemon/serviceRevision")).toString() != revision;
     const QString path = appConfigDir() + QLatin1Char('/') + name;
@@ -421,7 +429,17 @@ void BandProxy::tryStartDaemon()
     QFile log(appConfigDir() + QStringLiteral("/service-install.log"));
     if (log.open(QIODevice::WriteOnly | QIODevice::Truncate))
         log.close();
-    configureDaemonStep(0);
+    if (!QDBusConnection::sessionBus().connect(QStringLiteral("org.freedesktop.systemd1"),
+                QStringLiteral("/org/freedesktop/systemd1"), QStringLiteral("org.freedesktop.systemd1.Manager"),
+                QStringLiteral("JobRemoved"), this,
+                SLOT(onServiceJobRemoved(uint,QDBusObjectPath,QString,QString)))) {
+        setLocalStatus(tr("Не удалось подписаться на результат запуска службы"));
+        return;
+    }
+    m_configuringService = true;
+    m_serviceJobPath.clear();
+    m_earlyJobResults.clear();
+    configureDaemonStep(-1);
 }
 
 void BandProxy::configureDaemonStep(int step)
@@ -432,6 +450,9 @@ void BandProxy::configureDaemonStep(int step)
     QString method;
     QVariantList arguments;
     switch (step) {
+    case -1:
+        method = QStringLiteral("Subscribe");
+        break;
     case 0:
         method = QStringLiteral("EnableUnitFiles");
         arguments << QStringList{m_serviceUnitPath} << false << true;
@@ -448,7 +469,6 @@ void BandProxy::configureDaemonStep(int step)
         arguments << name << QStringLiteral("replace");
         break;
     default:
-        appSettings().setValue(QStringLiteral("daemon/serviceRevision"), m_serviceRevision);
         return;
     }
     QDBusMessage message = QDBusMessage::createMethodCall(
@@ -468,12 +488,52 @@ void BandProxy::configureDaemonStep(int step)
                 && (reply.errorName() == QLatin1String("org.freedesktop.systemd1.NoSuchUnit")
                     || reply.errorName() == QLatin1String("org.freedesktop.systemd1.NoSuchUnitFile")
                     || reply.errorName() == QLatin1String("org.freedesktop.DBus.Error.FileNotFound"));
-        if (reply.type() == QDBusMessage::ErrorMessage && !missingLegacy) {
+        const bool subscribed = step == -1 && reply.errorName() == QLatin1String("org.freedesktop.systemd1.AlreadySubscribed");
+        if (reply.type() == QDBusMessage::ErrorMessage && !missingLegacy && !subscribed) {
+            m_configuringService = false;
             setLocalStatus(tr("Не удалось настроить фоновую службу: %1").arg(reply.errorMessage()));
+            return;
+        }
+        if (step == 3) {
+            if (reply.arguments().isEmpty()) { finishServiceJob(QStringLiteral("invalid-reply")); return; }
+            m_serviceJobPath = qvariant_cast<QDBusObjectPath>(reply.arguments().first()).path();
+            if (m_serviceJobPath.isEmpty()) { finishServiceJob(QStringLiteral("invalid-job")); return; }
+            if (m_earlyJobResults.contains(m_serviceJobPath))
+                finishServiceJob(m_earlyJobResults.take(m_serviceJobPath));
+            else m_serviceJobTimer.start();
             return;
         }
         configureDaemonStep(step + 1);
     });
+}
+
+void BandProxy::onServiceJobRemoved(uint, const QDBusObjectPath &path,
+                                   const QString &unit, const QString &result)
+{
+    if (!m_configuringService || unit != QLatin1String(DAEMON_UNIT)) return;
+    if (m_serviceJobPath.isEmpty()) {
+        if (m_earlyJobResults.size() < 16) m_earlyJobResults.insert(path.path(), result);
+    } else if (m_serviceJobPath == path.path()) finishServiceJob(result);
+}
+
+void BandProxy::finishServiceJob(const QString &result)
+{
+    m_configuringService = false;
+    m_serviceJobTimer.stop();
+    m_earlyJobResults.clear();
+    QFile log(appConfigDir() + QStringLiteral("/service-install.log"));
+    if (log.open(QIODevice::WriteOnly | QIODevice::Append))
+        log.write((QStringLiteral("JobRemoved ") + result + QLatin1Char('\n')).toUtf8());
+    if (result == QLatin1String("done")) {
+        QSettings settings = appSettings();
+        settings.setValue(QStringLiteral("daemon/serviceRevision"), m_serviceRevision);
+        settings.sync();
+        refreshState();
+    } else {
+        const QString reason = tr("Фоновая служба не запустилась: %1").arg(result);
+        setLocalStatus(reason);
+        emit deviceError(reason);
+    }
 }
 
 void BandProxy::setDaemonEnabled(bool enabled)

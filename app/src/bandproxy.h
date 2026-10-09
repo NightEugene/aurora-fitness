@@ -4,6 +4,8 @@
 #define BANDPROXY_H
 
 #include <QObject>
+#include <QTimer>
+#include <QDBusObjectPath>
 #include <QVariantMap>
 #include <QVariantList>
 #include <QStringList>
@@ -131,6 +133,7 @@ signals:
 
 private slots:
     void onStateChanged(const QVariantMap &state);
+    void onServiceJobRemoved(uint id, const QDBusObjectPath &path, const QString &unit, const QString &result);
     void onGetStateFinished(QDBusPendingCallWatcher *watcher);
     void onOwnerChanged(const QString &service, const QString &oldOwner, const QString &newOwner);
     void onStateSignal(const QVariantMap &state, const QDBusMessage &message);
@@ -144,6 +147,11 @@ private:
     // Автоматическая регистрация и запуск службы через пользовательский systemd
     void tryStartDaemon();
     void configureDaemonStep(int step);
+    void finishServiceJob(const QString &result);
+    QTimer m_serviceJobTimer;
+    QMap<QString, QString> m_earlyJobResults;
+    QString m_serviceJobPath;
+    bool m_configuringService = false;
     QString m_serviceRevision;
     QString m_serviceUnitPath;
     bool m_serviceRestart = false;
