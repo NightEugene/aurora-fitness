@@ -172,7 +172,7 @@ void BandService::setAuthKey(const QString &hexKey)
 void BandService::sendTestNotification(const QString &title, const QString &body,
                                        const QString &appName, const QString &package)
 {
-    qInfo() << "[band-api] вызов sendTestNotification" << appName << "—" << title;
+    qInfo() << "[band-api] вызов sendTestNotification" << appName;
     emit invoked();
     m_bluez->sendTestNotification(title, body, appName, package);
 }

@@ -7,6 +7,8 @@
 #include <QString>
 #include <QMap>
 #include <QTimer>
+#include <QQueue>
+#include <QElapsedTimer>
 #include <QDateTime>
 
 typedef struct DBusConnection DBusConnection;
@@ -72,14 +74,16 @@ private:
     bool m_syncEnabled = false;
     int m_syncIntervalMin = 30;
     QDateTime m_lastSync;
+    QDateTime m_lastAttempt;
+    QTimer m_notificationTimer;
 
     bool m_connecting = false;
     bool m_bandAllowed = false; // владеем ли D-Bus-именем браслета (CLI отбирает)
-    bool m_pendingNotification = false;
-    QString m_pendingApp;
-    QString m_pendingTitle;
-    QString m_pendingBody;
-    QString m_pendingPackage;
+    struct PendingNotification {
+        QString app, title, body, package, address;
+        QDateTime created;
+    };
+    QQueue<PendingNotification> m_notifications;
     bool m_syncPending = false;
 };
 

@@ -594,7 +594,7 @@ void XiaomiChannel::sendNotification(const QString &appName, const QString &titl
     cmd.varint(2, 0);           // CMD_NOTIFICATION_SEND
     cmd.msg(F_NOTIFICATION, n1);
     sendEncryptedCommand(cmd.data);
-    qInfo() << "XiaomiChannel: уведомление отправлено:" << title;
+    qInfo() << "XiaomiChannel: уведомление передано в очередь";
 }
 
 // --- иконки уведомлений (Gadgetbridge XiaomiNotificationService) ---

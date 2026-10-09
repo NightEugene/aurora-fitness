@@ -40,6 +40,9 @@ const char MATCH_NAME_OWNER[] =
 NotificationDaemon::NotificationDaemon(BluezManager *bluez, const QString &mac, QObject *parent)
     : QObject(parent), m_bluez(bluez), m_mac(mac)
 {
+    m_notificationTimer.setSingleShot(true);
+    m_notificationTimer.setInterval(1000);
+    connect(&m_notificationTimer, &QTimer::timeout, this, &NotificationDaemon::flushPendingNotification);
     m_minuteTimer.setInterval(60000);
     connect(&m_minuteTimer, &QTimer::timeout, this, &NotificationDaemon::onMinuteTick);
 
@@ -260,37 +263,35 @@ void NotificationDaemon::handleNotify(const QString &appName,
     if (summary.isEmpty() && body.isEmpty())
         return;
 
+    reloadSettings();
+    if (!m_notifyEnabled || m_mac.isEmpty()) return;
     cacheIcon(package);
-    reloadSettings(); // подхватываем изменения настроек из GUI
-
-    qInfo() << "[daemon] Notify от" << appName << "—" << summary << "/" << body
-            << "pkg:" << package;
-
-    if (!m_notifyEnabled)
-        return;
-
-    // Запоминаем последнее уведомление — уйдёт на браслет, когда тот будет
-    // готов (или когда имя вернётся от CLI: NameAcquired → flush)
-    m_pendingApp = appName;
-    m_pendingTitle = summary;
-    m_pendingBody = body;
-    m_pendingPackage = package;
-    m_pendingNotification = true;
-    flushPendingNotification();
+    // Ограниченная очередь: до 20 сообщений, не старше пяти минут.
+    if (m_notifications.size() >= 20) m_notifications.dequeue();
+    m_notifications.enqueue({appName, summary, body, package, m_mac,
+                             QDateTime::currentDateTime()});
+    if (!m_notificationTimer.isActive()) flushPendingNotification();
 }
 
 void NotificationDaemon::flushPendingNotification()
 {
-    if (!m_pendingNotification)
-        return;
+    reloadSettings();
+    if (!m_notifyEnabled || !m_bandAllowed) return;
+    const QDateTime now = QDateTime::currentDateTime();
+    while (!m_notifications.isEmpty()) {
+        const auto &pending = m_notifications.head();
+        const qint64 age = pending.created.secsTo(now);
+        if (pending.address == m_mac && age >= 0 && age <= 300) break;
+        m_notifications.dequeue();
+    }
+    if (m_notifications.isEmpty()) return;
     if (!m_bluez->bandReady()) {
         ensureBandConnected();
         return;
     }
-    m_pendingNotification = false;
-    qInfo() << "[daemon] отправка на браслет:" << m_pendingTitle;
-    m_bluez->sendTestNotification(m_pendingTitle, m_pendingBody, m_pendingApp,
-                                  m_pendingPackage);
+    const PendingNotification pending = m_notifications.dequeue();
+    m_bluez->sendTestNotification(pending.title, pending.body, pending.app, pending.package);
+    if (!m_notifications.isEmpty()) m_notificationTimer.start();
 }
 
 void NotificationDaemon::ensureBandConnected()
@@ -318,7 +319,9 @@ void NotificationDaemon::ensureBandConnected()
 void NotificationDaemon::onBandReady()
 {
     m_connecting = false;
-    if (m_syncPending) {
+    reloadSettings();
+    if (!m_bandAllowed || !m_bluez->bandReady()) return;
+    if (m_syncPending && m_syncEnabled) {
         m_syncPending = false;
         qInfo() << "[daemon] автосинк";
         m_bluez->syncActivity();
@@ -340,6 +343,7 @@ void NotificationDaemon::onBandDisconnected()
 
 void NotificationDaemon::requestSync()
 {
+    if (!m_syncEnabled) return;
     if (!m_bandAllowed) {
         m_syncPending = true; // синк уйдёт, когда CLI отпустит браслет
         return;
@@ -361,10 +365,11 @@ void NotificationDaemon::onMinuteTick()
     if (!m_bandAllowed || !m_syncEnabled || m_syncIntervalMin <= 0)
         return;
     const QDateTime now = QDateTime::currentDateTime();
-    if (m_lastSync.isValid() && m_lastSync.secsTo(now) < m_syncIntervalMin * 60)
-        return;
+    const QDateTime previous = m_lastAttempt > m_lastSync ? m_lastAttempt : m_lastSync;
+    if (previous.isValid() && previous.secsTo(now) >= 0
+            && previous.secsTo(now) < qint64(m_syncIntervalMin) * 60) return;
     // Отмечаем попытку сразу, чтобы при обрыве связи не долбить браслет каждую минуту
-    m_lastSync = now;
+    m_lastAttempt = now;
     requestSync();
 }
 
@@ -376,20 +381,28 @@ void NotificationDaemon::reloadSettings()
     m_notifyEnabled = conf.value(QStringLiteral("daemon/notifyEnabled")) == QLatin1String("true");
     m_syncEnabled = conf.value(QStringLiteral("daemon/syncEnabled")) == QLatin1String("true");
     const QString address = conf.value(QStringLiteral("device/lastAddress"), conf.value(QStringLiteral("miband8/lastAddress")));
+    if (!m_notifyEnabled) {
+        m_notifications.clear();
+        m_notificationTimer.stop();
+    }
+    if (!m_syncEnabled) m_syncPending = false;
     if (!address.isEmpty() && address != m_mac) {
+        m_notifications.clear();
+        m_syncPending = false;
+        m_lastAttempt = QDateTime();
         m_mac = address;
         m_connecting = false;
-        if (m_bandAllowed)
+        if (m_bandAllowed && !m_bluez->connectedAddress().isEmpty()
+                && m_bluez->connectedAddress().compare(address, Qt::CaseInsensitive) != 0)
             m_bluez->disconnectBand();
     }
     bool ok = false;
     const int interval = conf.value(QStringLiteral("daemon/syncIntervalMin"),
                                     QStringLiteral("30")).toInt(&ok);
-    m_syncIntervalMin = ok ? interval : 30;
+    m_syncIntervalMin = ok ? qBound(1, interval, 1440) : 30;
     const QDateTime lastSync = QDateTime::fromString(
-                conf.value(QStringLiteral("device/lastSyncTime"), conf.value(QStringLiteral("miband8/lastSyncTime"))), Qt::ISODate);
-    if (lastSync.isValid())
-        m_lastSync = lastSync;
+                conf.value(lastSyncSettingsKey(m_mac)), Qt::ISODate);
+    m_lastSync = lastSync;
 }
 
 QMap<QString, QString> NotificationDaemon::readConfFile() const
