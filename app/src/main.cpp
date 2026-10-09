@@ -251,14 +251,16 @@ int main(int argc, char *argv[])
     view->rootContext()->setContextProperty(QStringLiteral("bluez"), &proxy);
     view->rootContext()->setContextProperty(QStringLiteral("storage"), &storage);
 
-    // --qml pages/Foo.qml — отладочный запуск с другой стартовой страницей
-    QString initialQml = QStringLiteral("qml/AuroraFitness.qml");
+    // Любая отладочная страница открывается внутри штатного ApplicationWindow.
+    QString startupPage = QStringLiteral("MainPage.qml");
     const int qmlIdx = cliArgs.indexOf(QStringLiteral("--qml"));
     if (qmlIdx >= 0 && qmlIdx + 1 < cliArgs.size()) {
-        initialQml = QStringLiteral("qml/pages/%1").arg(cliArgs.at(qmlIdx + 1));
-        qInfo() << "Запуск со страницей" << initialQml;
+        startupPage = cliArgs.at(qmlIdx + 1);
+        if (QFileInfo(startupPage).fileName() != startupPage || !startupPage.endsWith(QStringLiteral(".qml"))) return 1;
     }
-    view->setSource(Aurora::Application::pathTo(initialQml));
+    view->rootContext()->setContextProperty(QStringLiteral("startupPage"), startupPage);
+    view->setSource(Aurora::Application::pathTo(QStringLiteral("qml/AuroraFitness.qml")));
+    if (view->status() == QQuickView::Error) return 1;
     view->show();
 
     // --grab /tmp/shot.png [задержка_сек] — отладочный скриншот окна после старта
@@ -267,9 +269,10 @@ int main(int argc, char *argv[])
         const QString path = cliArgs.at(grabIdx + 1);
         const int delaySec = grabIdx + 2 < cliArgs.size()
                 ? cliArgs.at(grabIdx + 2).toInt() : 8;
-        QTimer::singleShot(delaySec * 1000, application.data(), [&]() {
+        if (delaySec < 1 || delaySec > 3600) return 1;
+        QTimer::singleShot(delaySec * 1000, application.data(), [&, path]() {
             const QImage img = view->grabWindow();
-            img.save(path);
+            if (img.isNull() || !img.save(path)) { application->exit(1); return; }
             qInfo() << "Скриншот сохранён:" << path << img.size();
             application->quit();
         });
