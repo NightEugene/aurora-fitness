@@ -18,6 +18,9 @@
 #include <QProcess>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
+#include <QCryptographicHash>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <cmath>
@@ -25,7 +28,7 @@
 namespace {
 const char BAND_SERVICE[] = "ru.nighteugene.aurorafitness.band";
 const char BAND_PATH[] = "/band";
-const char DAEMON_UNIT[] = "ru.nighteugene.aurorafitness-daemon.service";
+const char DAEMON_UNIT[] = "ru.nighteugene.aurorafitness-background.service";
 
 // Вложенные контейнеры a{sv}/av приходят как QDBusArgument, включая
 // карты внутри списков сервисов и характеристик.
@@ -104,8 +107,8 @@ BandProxy::BandProxy(Storage *storage, QObject *parent)
         refreshState();
     } else {
         setOffline(tr("Служба браслета не запущена"));
-        tryStartDaemon();
     }
+    tryStartDaemon();
 }
 
 void BandProxy::callDaemon(const QString &method,
@@ -375,23 +378,85 @@ void BandProxy::setLocalStatus(const QString &text)
 void BandProxy::tryStartDaemon()
 {
     const QString name = QString::fromLatin1(DAEMON_UNIT);
-    const QString src = QStringLiteral("/usr/share/ru.nighteugene.aurorafitness/") + name;
-    const QString dirPath = QDir::homePath() + QStringLiteral("/.config/systemd/user");
-    const QString dst = dirPath + QLatin1Char('/') + name;
+    QFile source(QStringLiteral("/usr/share/ru.nighteugene.aurorafitness/") + name);
+    QFile executable(QCoreApplication::applicationFilePath());
+    if (!source.open(QIODevice::ReadOnly) || !executable.open(QIODevice::ReadOnly)) {
+        setLocalStatus(tr("Не удалось прочитать файлы фоновой службы"));
+        return;
+    }
+    const QByteArray unit = source.readAll();
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(unit);
+    hash.addData(&executable);
+    const QString revision = QString::fromLatin1(hash.result().toHex());
+    const bool changed = appSettings().value(QStringLiteral("daemon/serviceRevision")).toString() != revision;
+    const QString path = appConfigDir() + QLatin1Char('/') + name;
+    QSaveFile destination(path);
+    if (!destination.open(QIODevice::WriteOnly)
+            || destination.write(unit) != unit.size() || !destination.commit()) {
+        setLocalStatus(tr("Не удалось сохранить файл фоновой службы"));
+        return;
+    }
 
-    if (!QFile::exists(dst)) {
-        QDir().mkpath(dirPath);
-        if (!QFile::copy(src, dst)) {
-            // Песочница GUI: запись в ~/.config/systemd запрещена
-            setLocalStatus(tr("Служба браслета не установлена (песочница): выполните в терминале: cp %1 %2 && systemctl --user enable --now %3")
-                           .arg(src, dst, name));
+    m_serviceRevision = revision;
+    m_serviceRestart = changed;
+    m_serviceUnitPath = path;
+    QFile log(appConfigDir() + QStringLiteral("/service-install.log"));
+    if (log.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        log.close();
+    configureDaemonStep(0);
+}
+
+void BandProxy::configureDaemonStep(int step)
+{
+    // AppLaunch разрешает управлять собственными user-службами через D-Bus.
+    // Ссылки вне песочницы создаёт сам systemd, GUI сохраняет только свой юнит.
+    const QString name = QString::fromLatin1(DAEMON_UNIT);
+    QString method;
+    QVariantList arguments;
+    switch (step) {
+    case 0:
+        method = QStringLiteral("EnableUnitFiles");
+        arguments << QStringList{m_serviceUnitPath} << false << true;
+        break;
+    case 1:
+        method = QStringLiteral("DisableUnitFiles");
+        arguments << QStringList{QStringLiteral("ru.nighteugene.aurorafitness-daemon.service")} << false;
+        break;
+    case 2:
+        method = QStringLiteral("Reload");
+        break;
+    case 3:
+        method = m_serviceRestart ? QStringLiteral("RestartUnit") : QStringLiteral("StartUnit");
+        arguments << name << QStringLiteral("replace");
+        break;
+    default:
+        appSettings().setValue(QStringLiteral("daemon/serviceRevision"), m_serviceRevision);
+        return;
+    }
+    QDBusMessage message = QDBusMessage::createMethodCall(
+                QStringLiteral("org.freedesktop.systemd1"), QStringLiteral("/org/freedesktop/systemd1"),
+                QStringLiteral("org.freedesktop.systemd1.Manager"), method);
+    message.setArguments(arguments);
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(message, 15000), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this,
+            [this, watcher, step, method]() {
+        const QDBusMessage reply = watcher->reply();
+        watcher->deleteLater();
+        QFile log(appConfigDir() + QStringLiteral("/service-install.log"));
+        if (log.open(QIODevice::WriteOnly | QIODevice::Append))
+            log.write((method + QLatin1Char(' ') + reply.errorName() + QLatin1Char(' ')
+                       + reply.errorMessage() + QLatin1Char('\n')).toUtf8());
+        const bool missingLegacy = step == 1
+                && (reply.errorName() == QLatin1String("org.freedesktop.systemd1.NoSuchUnit")
+                    || reply.errorName() == QLatin1String("org.freedesktop.systemd1.NoSuchUnitFile")
+                    || reply.errorName() == QLatin1String("org.freedesktop.DBus.Error.FileNotFound"));
+        if (reply.type() == QDBusMessage::ErrorMessage && !missingLegacy) {
+            setLocalStatus(tr("Не удалось настроить фоновую службу: %1").arg(reply.errorMessage()));
             return;
         }
-        QProcess::execute(QStringLiteral("systemctl"),
-                          {QStringLiteral("--user"), QStringLiteral("daemon-reload")});
-    }
-    QProcess::startDetached(QStringLiteral("systemctl"),
-                            {QStringLiteral("--user"), QStringLiteral("start"), name});
+        configureDaemonStep(step + 1);
+    });
 }
 
 void BandProxy::setDaemonEnabled(bool enabled)

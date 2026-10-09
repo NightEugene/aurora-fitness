@@ -1,9 +1,10 @@
 #!/bin/sh
 # Сборка и (опционально) установка ru.nighteugene.aurorafitness
 # через Aurora SDK 5.2.1.200 (docker build tools + apptool).
+# Проверка regular отключена: для регистрации user-службы требуется AppLaunch.
 #
 # Использование:
-#   ./build.sh           собрать, подписать и провалидировать RPM
+#   ./build.sh           собрать и подписать RPM
 #   ./build.sh --deploy  дополнительно установить на устройство
 #                        (ssh defaultuser@192.168.2.15)
 set -e
@@ -29,7 +30,7 @@ for ARCH in $ARCHES; do
     esac
     echo "== build $ARCH =="
     VAR_SPECFILE="$WORKSPACE_DIR/rpm/$NAME.spec" \
-        "$SDK/tools/apptool" build "$OPT" \
+        "$SDK/tools/apptool" build "$OPT" --novalidate \
         --srcdir=/workspace/app --dstdir=/workspace/build-docker-"$ARCH"
 done
 
@@ -39,5 +40,7 @@ echo "Готово: build-docker-{$(echo $ARCHES | tr ' ' ',')}/RPMS/"
 if [ "$1" = "--deploy" ]; then
     echo "== deploy (пользователь defaultuser, aarch64) =="
     scp "$RPM" "$DEVICE":/home/defaultuser/Downloads/
-    ssh "$DEVICE" "sdk-deploy-rpm --silent /home/defaultuser/Downloads/$NAME-$VERSION-$RELEASE.aarch64.rpm"
+    ssh "$DEVICE" "sdk-deploy-rpm --silent --keepUserData /home/defaultuser/Downloads/$NAME-$VERSION-$RELEASE.aarch64.rpm"
+    # Первый обычный запуск сам регистрирует службу через D-Bus systemd.
+    ssh "$DEVICE" "busctl --user call ru.omp.RuntimeManager /ru/omp/RuntimeManager/Intents1 ru.omp.RuntimeManager.Intents1 InvokeIntent 'sa{sv}a{sv}' Start 1 preferredHandler s '$NAME' 0"
 fi

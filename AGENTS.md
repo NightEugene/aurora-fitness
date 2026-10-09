@@ -25,11 +25,22 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   `ssh defaultuser@192.168.2.15 'XDG_RUNTIME_DIR=/run/user/100000 WAYLAND_DISPLAY=/run/display/wayland-0 /usr/bin/ru.nighteugene.aurorafitness [--qml Страница.qml | --grab /tmp/x.png 12]'`
   QML-ошибки видны в stdout; `--grab` пишет скриншот окна (фон белый/чёрный —
   артефакт запуска без lipstick, тема реально тёмная).
-- После каждого деплоя перезапускать демон:
-  `ssh defaultuser@192.168.2.15 'systemctl --user restart ru.nighteugene.aurorafitness-daemon'`.
-  Юнит ставится вручную (валидатор regular запрещает /usr/lib/systemd/user в
-  пакете): лежит в `/usr/share/ru.nighteugene.aurorafitness/`, скопирован в
-  `~/.config/systemd/user/`, `enable --now` сделан.
+- Автоматическая установка службы: RPM содержит
+  `/usr/share/ru.nighteugene.aurorafitness/ru.nighteugene.aurorafitness-background.service`.
+  При запуске GUI BandProxy сохраняет юнит в dotted-каталог настроек и вызывает
+  D-Bus systemd: EnableUnitFiles(абсолютный путь), DisableUnitFiles(старый
+  daemon.service), Reload, StartUnit/RestartUnit. Доступ разрешает AppLaunch
+  в desktop-файле. Ссылки в ~/.config/systemd/user создаёт сам systemd.
+  Новая служба конфликтует со старой, поэтому одновременно они не работают.
+  SHA-256 бинаря и юнита определяет необходимость перезапуска после обновления.
+  Журнал установки: `~/.config/ru.nighteugene.aurorafitness/service-install.log`.
+- build.sh --deploy устанавливает пакет и открывает GUI через RuntimeManager:
+  служба настраивается самим приложением. Вручную копировать/enable юнит не надо.
+- Проверка regular в build.sh отключена (`--novalidate`) для AppLaunch.
+  На устройстве перед установкой требуется отключить валидацию пакетов в настройках.
+  RPM-скрипты не использовать: APM отклоняет их даже при отключённой валидации.
+  Юнит в /usr/lib/systemd/user внутри RPM APM оставляет в контейнере /opt/app,
+  системный systemd его не видит; systemctl внутри песочницы отсутствует.
 - FileConflict при установке = ручные правки в
   `/usr/share/ru.nighteugene.aurorafitness/` на устройстве →
   `ssh root@192.168.2.15 'rm -rf /usr/share/ru.nighteugene.aurorafitness'` и повторить деплой.
@@ -212,8 +223,8 @@ Qt 5.6.3 / C++ / QML (Aurora.Controls), BLE через BlueZ D-Bus.
   рекурсивно распаковывать из QDBusArgument/QDBusVariant: toMap()/toList()
   напрямую дают пустые контейнеры (батарея/прошивка/сервисы пропадали).
   Следит за именем (QDBusServiceWatcher): демона
-  нет → status «Служба браслета не запущена» + попытка systemctl --user start
-  (копирование юнита из песочницы запрещено — сообщение с ручной командой).
+  нет → status «Служба браслета не запущена». При запуске GUI выполняется
+  автоматическая регистрация службы через D-Bus systemd (AppLaunch).
 - BlueZ на устройстве эхом отражает наши WriteValue как
   PropertiesChanged(Value) даже на write-char 0x0052, А шина/QtDBus
   доставляет каждый сигнал Value в слот дважды (dbus-monitor видит по

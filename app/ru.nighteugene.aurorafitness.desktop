@@ -7,7 +7,7 @@ Name=Fitness
 Name[ru]=Фитнес
 
 [X-Application]
-Permissions=Bluetooth;
+Permissions=Bluetooth;AppLaunch;
 OrganizationName=ru.nighteugene
 ApplicationName=aurorafitness
 ExecDBus=/usr/bin/ru.nighteugene.aurorafitness

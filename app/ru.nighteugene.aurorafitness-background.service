@@ -2,6 +2,8 @@
 
 [Unit]
 Description=Aurora Fitness: уведомления, синхронизация и управление музыкой
+Conflicts=ru.nighteugene.aurorafitness-daemon.service
+ConditionPathExists=/usr/bin/ru.nighteugene.aurorafitness
 
 [Service]
 ExecStart=/usr/bin/ru.nighteugene.aurorafitness --daemon

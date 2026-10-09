@@ -140,8 +140,12 @@ private:
                     const QVariant &a3 = QVariant(), const QVariant &a4 = QVariant());
     void refreshState();
     void setOffline(const QString &reason);
-    // Попытка запустить службу демона (копирование юнита + systemctl --user start)
+    // Автоматическая регистрация и запуск службы через пользовательский systemd
     void tryStartDaemon();
+    void configureDaemonStep(int step);
+    QString m_serviceRevision;
+    QString m_serviceUnitPath;
+    bool m_serviceRestart = false;
     // Локальное сообщение вместо статуса демона (например, отказ песочницы)
     void setLocalStatus(const QString &text);
 

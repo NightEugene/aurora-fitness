@@ -51,10 +51,8 @@ LIBS += -lcrypto
 INCLUDEPATH += /usr/include/dbus-1.0 /usr/lib/dbus-1.0/include
 LIBS += -ldbus-1
 
-# systemd user-юнит демона (валидатор regular-профиля запрещает установку
-# в /usr/lib/systemd/user — кладём в данные приложения; установку в
-# ~/.config/systemd/user выполняют вручную вне песочницы, см. README)
-daemon_unit.files = ru.nighteugene.aurorafitness-daemon.service
+# Пользовательская служба устанавливается вместе с RPM.
+daemon_unit.files = ru.nighteugene.aurorafitness-background.service
 daemon_unit.path = /usr/share/ru.nighteugene.aurorafitness
 INSTALLS += daemon_unit
 
@@ -77,4 +75,4 @@ DISTFILES += \
     qml/pages/ViewPage.qml \
     qml/cover/DefaultCoverPage.qml \
     ru.nighteugene.aurorafitness.desktop \
-    ru.nighteugene.aurorafitness-daemon.service
+    ru.nighteugene.aurorafitness-background.service
