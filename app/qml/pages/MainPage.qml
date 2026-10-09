@@ -269,7 +269,7 @@ Page {
                 return us.length > 0 ? us : qsTr("Браслет не подключён")
             var s = bluez.connectedDeviceName.length > 0
                     ? bluez.connectedDeviceName : qsTr("Подключён")
-            if (bluez.bandInfo.batteryLevel !== undefined && bluez.bandInfo.batteryLevel > 0)
+            if (bluez.bandInfo.batteryLevel !== undefined && bluez.bandInfo.batteryLevel >= 0)
                 s += " · " + bluez.bandInfo.batteryLevel + "%"
             if (page.lastSync.length > 0)
                 s += " · " + qsTr("обновлено") + " " + page.lastSync

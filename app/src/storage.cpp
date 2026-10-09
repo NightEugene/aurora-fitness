@@ -724,7 +724,7 @@ int Storage::minuteSampleCount()
 
 void Storage::saveBattery(int level, int state)
 {
-    if (!m_ready || level <= 0)
+    if (!m_ready || level < 0 || level > 100)
         return;
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral("INSERT OR REPLACE INTO battery_samples(ts, level, state)"
@@ -734,6 +734,8 @@ void Storage::saveBattery(int level, int state)
     q.addBindValue(state);
     if (!q.exec())
         qWarning() << "Storage: insert battery_samples:" << q.lastError().text();
+    else
+        emit dataChanged();
 }
 
 QVariantList Storage::batteryHistory(int days)

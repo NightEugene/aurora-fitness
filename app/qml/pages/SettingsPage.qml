@@ -102,7 +102,7 @@ Page {
                         font.pixelSize: Theme.fontSizeExtraSmall
                         text: bluez.connectedAddress
                               + (bluez.bandInfo.batteryLevel !== undefined
-                                 && bluez.bandInfo.batteryLevel > 0
+                                 && bluez.bandInfo.batteryLevel >= 0
                                  ? "  ·  " + bluez.bandInfo.batteryLevel + "%" : "")
                     }
                 }
